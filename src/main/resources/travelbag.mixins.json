@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "package": "net.travelbag.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": [
+    "BundleContentsMixin",
+    "BundleItemMixin",
+    "ScreenHandlerMixin",
+    "ServerPlayerEntityMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

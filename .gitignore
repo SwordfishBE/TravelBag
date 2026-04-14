@@ -1,30 +1,40 @@
-# Gradle
+# gradle
+
 .gradle/
 build/
 out/
+classes/
 
-# IntelliJ IDEA
+# eclipse
+
+*.launch
+
+# idea
+
 .idea/
 *.iml
-*.iws
 *.ipr
+*.iws
 
-# Eclipse
+# vscode
+
+.settings/
+.vscode/
+bin/
 .classpath
 .project
-.settings/
 
-# VS Code
-.vscode/
+# macos
 
-# Fabric Loom caches
-.loom-cache/
+*.DS_Store
 
-# macOS
-.DS_Store
+# fabric
 
-# Generated sources (remapped)
-src/main/generated/
-
-# Run configurations (IntelliJ)
 run/
+
+# java
+
+hs_err_*.log
+replay_*.log
+*.hprof
+*.jfr
