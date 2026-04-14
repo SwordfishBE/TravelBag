@@ -2,6 +2,11 @@
 
 TravelBag is a free and reliable backpack mod for Fabric with configurable sizes, optional LuckPerms support, smart file-based storage, and a built-in shortcut item for quick access.
 
+[![GitHub Release](https://img.shields.io/github/v/release/SwordfishBE/TravelBag?display_name=release&logo=github)](https://github.com/SwordfishBE/TravelBag/releases)
+[![GitHub Downloads](https://img.shields.io/github/downloads/SwordfishBE/TravelBag/total?logo=github)](https://github.com/SwordfishBE/TravelBag/releases)
+[![Modrinth Downloads](https://img.shields.io/modrinth/dt/mBHOL0vT?logo=modrinth&logoColor=white&label=Modrinth%20downloads)](https://modrinth.com/mod/travelbag)
+[![CurseForge Downloads](https://img.shields.io/curseforge/dt/1513977?logo=curseforge&logoColor=white&label=CurseForge%20downloads)](https://www.curseforge.com/minecraft/mc-mods/travelbag)
+
 It is designed to feel safe on real servers:
 - each player has their own stored TravelBag
 - the storage format always keeps room for 6 rows internally
@@ -168,6 +173,22 @@ Optional:
 - LuckPerms / Fabric Permissions API usage
 - Mod Menu
 - Cloth Config
+
+---
+
+## 📦 Installation
+
+| Platform   | Link |
+|------------|------|
+| GitHub     | [Releases](https://github.com/SwordfishBE/TravelBag/releases) |
+| Modrinth | [TravelBag](https://modrinth.com/mod/travelbag) |
+| CurseForge | [TravelBag](https://www.curseforge.com/minecraft/mc-mods/travelbag) |
+
+
+1. Download the latest JAR from your preferred platform above.
+2. Place the JAR in your server's `mods/` folder.
+3. Make sure [Fabric API](https://modrinth.com/mod/fabric-api) is also installed.
+4. Start Minecraft — the config file will be created automatically.
 
 ---
 
