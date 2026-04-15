@@ -7,12 +7,12 @@ TravelBag is a free and reliable backpack mod for Fabric with configurable sizes
 [![Modrinth Downloads](https://img.shields.io/modrinth/dt/mBHOL0vT?logo=modrinth&logoColor=white&label=Modrinth%20downloads)](https://modrinth.com/mod/travelbag)
 [![CurseForge Downloads](https://img.shields.io/curseforge/dt/1513977?logo=curseforge&logoColor=white&label=CurseForge%20downloads)](https://www.curseforge.com/minecraft/mc-mods/travelbag)
 
-It is designed to feel safe on real servers:
-- each player has their own stored TravelBag
-- the storage format always keeps room for 6 rows internally
-- downgrading permissions or config size does not delete hidden items
-- backups are created safely without generating nested backup files
-- item NBT is preserved
+It is designed to be safe on real servers:
+- Each player has their own stored TravelBag
+- The storage format always keeps room for 6 rows internally
+- Downgrading permissions or config size does not delete hidden items
+- Item NBT is preserved
+- No client-side mod needed
 
 ---
 
@@ -21,6 +21,7 @@ It is designed to feel safe on real servers:
 - Optional LuckPerms integration for size and feature permissions
 - Optional auto-pickup when a player's inventory is full
 - Optional shortcut head item for fast TravelBag access
+- Configurable TravelBag shortcut head item.
 - Per-player TravelBag files stored by UUID
 - Automatic backup support
 - Item filter support
@@ -28,7 +29,6 @@ It is designed to feel safe on real servers:
 - Config reload command
 - Mod Menu integration
 - Optional Cloth Config support for an in-game config screen
-- Modrinth update checker
 
 ---
 
