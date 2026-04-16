@@ -57,6 +57,7 @@ public final class TravelBagMod implements ModInitializer {
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_NAME);
 	private static final int MAX_ROWS = 6;
 	private static final int SHORTCUT_RESYNC_TICKS = 40;
+	private static final int AUTO_BACKUP_TICKS = 12000;
 	private static TravelBagMod instance;
 
 	private final Map<UUID, Long> lastOpenTimes = new ConcurrentHashMap<>();
@@ -68,6 +69,7 @@ public final class TravelBagMod implements ModInitializer {
 	private TravelBagPickupService pickupService;
 	private ShortcutItemManager shortcutItemManager;
 	private MinecraftServer server;
+	private int autoBackupTicks;
 
 	public static TravelBagMod getInstance() {
 		return instance;
@@ -89,6 +91,7 @@ public final class TravelBagMod implements ModInitializer {
 
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			this.server = server;
+			this.autoBackupTicks = 0;
 			this.storage.prepare(server);
 			this.storage.createBackups();
 			this.pendingShortcutSyncs.clear();
@@ -104,6 +107,7 @@ public final class TravelBagMod implements ModInitializer {
 			this.storage.saveAll();
 			this.pendingShortcutSyncs.clear();
 			this.openBags.clear();
+			this.autoBackupTicks = 0;
 			this.server = null;
 		});
 
@@ -128,7 +132,10 @@ public final class TravelBagMod implements ModInitializer {
 				this.handlePlayerDeath(player);
 			}
 		});
-		ServerTickEvents.END_SERVER_TICK.register(server -> this.processPendingShortcutSyncs(server));
+		ServerTickEvents.END_SERVER_TICK.register(server -> {
+			this.processPendingShortcutSyncs(server);
+			this.processAutoBackups();
+		});
 
 		UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
 			if (player instanceof ServerPlayer serverPlayer && this.shortcutItemManager.isShortcutItem(serverPlayer.getItemInHand(hand))) {
@@ -232,7 +239,6 @@ public final class TravelBagMod implements ModInitializer {
 
 	public void openOwnBag(ServerPlayer player) {
 		this.shortcutItemManager.syncShortcutItem(player);
-		this.compactBag(player.getUUID(), this.getRowsFor(player));
 		this.openBag(player, player.getGameProfile(), true, true);
 	}
 
@@ -261,9 +267,13 @@ public final class TravelBagMod implements ModInitializer {
 			return;
 		}
 
+		PlayerBagData data = this.storage.getOrLoad(ownerProfile.id());
+		if (data.isSaveBlocked()) {
+			viewer.sendSystemMessage(Component.literal("TravelBag data has been locked to prevent item loss. Please check the server logs and restore from backup if needed."));
+			return;
+		}
 		int rows = enforceOwnerPermissions ? this.permissionService.getRowsFor(ownerProfile.id()) : MAX_ROWS;
 		rows = Math.max(1, Math.min(MAX_ROWS, rows));
-		PlayerBagData data = this.storage.getOrLoad(ownerProfile.id());
 		this.compactBag(ownerProfile.id(), rows);
 		String ownerName = ownerProfile.name() == null || ownerProfile.name().isBlank() ? ownerProfile.id().toString() : ownerProfile.name();
 		boolean editable = ownerView || allowEdit && this.permissionService.canEditOthers(viewer);
@@ -328,6 +338,9 @@ public final class TravelBagMod implements ModInitializer {
 		}
 
 		PlayerBagData data = this.storage.getOrLoad(ownerUuid);
+		if (data.isSaveBlocked()) {
+			return false;
+		}
 		int maxSlots = Math.max(1, Math.min(MAX_ROWS, rows)) * 9;
 		ItemStack remaining = stack.copy();
 		List<ItemStack> simulated = new ArrayList<>(maxSlots);
@@ -368,6 +381,9 @@ public final class TravelBagMod implements ModInitializer {
 		}
 
 		PlayerBagData data = this.storage.getOrLoad(ownerUuid);
+		if (data.isSaveBlocked()) {
+			return false;
+		}
 		int maxSlots = Math.max(1, Math.min(MAX_ROWS, rows)) * 9;
 
 		for (int slot = 0; slot < maxSlots; slot++) {
@@ -405,6 +421,9 @@ public final class TravelBagMod implements ModInitializer {
 
 	public boolean compactBag(UUID ownerUuid) {
 		PlayerBagData data = this.storage.getOrLoad(ownerUuid);
+		if (data.isSaveBlocked()) {
+			return false;
+		}
 		boolean changed = this.compactBagData(data);
 		if (changed) {
 			this.refreshOpenBags(ownerUuid);
@@ -415,6 +434,9 @@ public final class TravelBagMod implements ModInitializer {
 
 	public boolean compactBag(UUID ownerUuid, int visibleRows) {
 		PlayerBagData data = this.storage.getOrLoad(ownerUuid);
+		if (data.isSaveBlocked()) {
+			return false;
+		}
 		if (!this.hasHiddenItems(data, visibleRows)) {
 			return false;
 		}
@@ -503,6 +525,10 @@ public final class TravelBagMod implements ModInitializer {
 
 	public void handlePlayerDeath(ServerPlayer player) {
 		PlayerBagData data = this.storage.getOrLoad(player.getUUID());
+		if (data.isSaveBlocked()) {
+			LOGGER.error("[TravelBag] Skipping drop-on-death processing for {} because the bag is locked to prevent item loss.", player.getUUID());
+			return;
+		}
 		if (data.isEmpty()) {
 			return;
 		}
@@ -534,6 +560,10 @@ public final class TravelBagMod implements ModInitializer {
 
 	public void cleanBag(UUID ownerUuid) {
 		PlayerBagData data = this.storage.getOrLoad(ownerUuid);
+		if (data.isSaveBlocked()) {
+			LOGGER.error("[TravelBag] Refusing to clean locked TravelBag data for {}.", ownerUuid);
+			return;
+		}
 		data.clear();
 		this.refreshOpenBags(ownerUuid);
 		this.storage.save(ownerUuid);
@@ -542,6 +572,7 @@ public final class TravelBagMod implements ModInitializer {
 	public void backupNow() {
 		this.storage.saveAll();
 		this.storage.createBackups();
+		LOGGER.info("[TravelBag] Manual backup completed.");
 	}
 
 	public void reload() throws IOException {
@@ -581,6 +612,25 @@ public final class TravelBagMod implements ModInitializer {
 				this.pendingShortcutSyncs.put(entry.getKey(), remainingTicks);
 			}
 		}
+	}
+
+	private void processAutoBackups() {
+		if (this.server == null) {
+			return;
+		}
+
+		this.autoBackupTicks++;
+		if (this.autoBackupTicks < AUTO_BACKUP_TICKS) {
+			return;
+		}
+		this.autoBackupTicks = 0;
+
+		this.storage.saveAll();
+		if (!this.storage.hasChangesSinceBackup()) {
+			return;
+		}
+
+		this.storage.createBackups();
 	}
 
 	private void refreshOpenBags(UUID ownerUuid) {

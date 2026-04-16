@@ -7,6 +7,8 @@ public final class PlayerBagData {
 	private final NonNullList<ItemStack> stacks = NonNullList.withSize(54, ItemStack.EMPTY);
 	private boolean dirty;
 	private boolean shortcutGranted;
+	private boolean saveBlocked;
+	private String saveBlockReason = "";
 
 	public int size() {
 		return this.stacks.size();
@@ -31,6 +33,19 @@ public final class PlayerBagData {
 
 	public void clearDirty() {
 		this.dirty = false;
+	}
+
+	public boolean isSaveBlocked() {
+		return this.saveBlocked;
+	}
+
+	public String getSaveBlockReason() {
+		return this.saveBlockReason;
+	}
+
+	public void blockSaving(String reason) {
+		this.saveBlocked = true;
+		this.saveBlockReason = reason == null ? "" : reason;
 	}
 
 	public boolean isShortcutGranted() {
