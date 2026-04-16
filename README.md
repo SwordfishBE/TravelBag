@@ -1,17 +1,20 @@
 # TravelBag
 
-TravelBag is a free and reliable backpack mod for Fabric with configurable sizes, optional LuckPerms support, smart file-based storage, and a built-in shortcut item for quick access.
-
 [![GitHub Release](https://img.shields.io/github/v/release/SwordfishBE/TravelBag?display_name=release&logo=github)](https://github.com/SwordfishBE/TravelBag/releases)
 [![GitHub Downloads](https://img.shields.io/github/downloads/SwordfishBE/TravelBag/total?logo=github)](https://github.com/SwordfishBE/TravelBag/releases)
 [![Modrinth Downloads](https://img.shields.io/modrinth/dt/mBHOL0vT?logo=modrinth&logoColor=white&label=Modrinth%20downloads)](https://modrinth.com/mod/travelbag)
 [![CurseForge Downloads](https://img.shields.io/curseforge/dt/1513977?logo=curseforge&logoColor=white&label=CurseForge%20downloads)](https://www.curseforge.com/minecraft/mc-mods/travelbag)
 
-It is designed to be safe on real servers:
+TravelBag is a free and reliable backpack mod for Fabric with configurable sizes, optional LuckPerms support, smart file-based storage, and a built-in shortcut item for quick access.
+
+It is designed to feel safe on real servers:
 - Each player has their own stored TravelBag
 - The storage format always keeps room for 6 rows internally
 - Downgrading permissions or config size does not delete hidden items
-- Item NBT is preserved
+- Backups are created safely without generating nested backup files
+- The latest 2 backups are rotated automatically per player file
+- Item data is serialized with registry-aware codecs so enchantments and other components stay intact
+- Unsafe bag data is locked instead of being silently overwritten
 - No client-side mod needed
 
 ---
@@ -23,7 +26,7 @@ It is designed to be safe on real servers:
 - Optional shortcut head item for fast TravelBag access
 - Configurable TravelBag shortcut head item.
 - Per-player TravelBag files stored by UUID
-- Automatic backup support
+- Automatic backup support with rotation
 - Item filter support
 - Shulker box restriction toggle
 - Config reload command
@@ -90,10 +93,21 @@ This means:
 - hidden rows stay preserved when a player is downgraded
 - re-upgrading size or permissions reveals those items again
 - compacting can move stackable items upward into visible rows when possible
+- item serialization uses registry-aware codecs to preserve enchantments and other modern item components
+- if TravelBag cannot safely decode a bag file, that bag is locked to prevent accidental overwrite or item loss
 
 Backups are written as:
 - `<uuid>.dat`
-- `<uuid>.backup.dat`
+- `<uuid>.backup.1.dat` - newest backup
+- `<uuid>.backup.2.dat` - previous backup
+
+Backups are created:
+- on server start
+- on `/travelbag reload`
+- on `/travelbag backup`
+- automatically every 10 minutes, but only if TravelBag data changed since the previous backup
+
+If a bag file cannot be decoded safely, TravelBag also creates a timestamped failure snapshot before refusing further saves for that bag.
 
 ---
 
@@ -159,20 +173,6 @@ This means:
 - with Mod Menu + Cloth Config installed, you get a config screen
 - on dedicated servers, Cloth Config is not required
 - on clients without Cloth Config, the mod still works normally
-
----
-
-## ⁉️ Requirements
-
-- Minecraft `26.1.2`
-- Fabric Loader `0.18.6+`
-- Java `25+`
-- Fabric API
-
-Optional:
-- LuckPerms / Fabric Permissions API usage
-- Mod Menu
-- Cloth Config
 
 ---
 
