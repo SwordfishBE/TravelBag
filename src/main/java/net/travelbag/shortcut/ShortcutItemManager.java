@@ -107,7 +107,10 @@ public final class ShortcutItemManager {
 		}
 
 		ItemStack movablePreferred = preferredStack.copy();
-		if (this.mod.canStoreItem(player.getUUID(), movablePreferred) && this.mod.tryStoreInBag(player.getUUID(), movablePreferred)) {
+		if (this.mod.canStoreItem(player.getUUID(), movablePreferred)
+			&& this.mod.canFullyStoreInBag(player.getUUID(), movablePreferred)
+			&& this.mod.tryStoreInBag(player.getUUID(), movablePreferred)
+			&& movablePreferred.isEmpty()) {
 			player.getInventory().setItem(preferredSlot, shortcut);
 			return true;
 		}
@@ -127,6 +130,9 @@ public final class ShortcutItemManager {
 
 			ItemStack movable = stack.copy();
 			if (!this.mod.canStoreItem(player.getUUID(), movable)) {
+				continue;
+			}
+			if (!this.mod.canFullyStoreInBag(player.getUUID(), movable)) {
 				continue;
 			}
 

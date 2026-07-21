@@ -200,6 +200,11 @@ public final class TravelBagMod implements ModInitializer {
 		}
 	}
 
+	public boolean hasOpenBag(UUID ownerUuid) {
+		List<TravelBagInventory> inventories = this.openBags.get(ownerUuid);
+		return inventories != null && !inventories.isEmpty();
+	}
+
 	public MinecraftServer getServer() {
 		return this.server;
 	}
@@ -546,27 +551,36 @@ public final class TravelBagMod implements ModInitializer {
 			return;
 		}
 
+		boolean changed = false;
 		for (int slot = 0; slot < data.size(); slot++) {
 			ItemStack stack = data.getStack(slot);
 			if (!stack.isEmpty()) {
-				player.drop(stack.copy(), true, false);
-				data.setStack(slot, ItemStack.EMPTY);
+				if (player.drop(stack.copy(), true, false) != null) {
+					data.setStack(slot, ItemStack.EMPTY);
+					changed = true;
+				} else {
+					LOGGER.error("[TravelBag] Failed to drop bag slot {} for {}. The item remains stored.", slot, player.getUUID());
+				}
 			}
+		}
+		if (!changed) {
+			return;
 		}
 		data.markDirty();
 		this.refreshOpenBags(player.getUUID());
 		this.storage.save(player.getUUID());
 	}
 
-	public void cleanBag(UUID ownerUuid) {
+	public boolean cleanBag(UUID ownerUuid) {
 		PlayerBagData data = this.storage.getOrLoad(ownerUuid);
 		if (data.isSaveBlocked()) {
 			LOGGER.error("[TravelBag] Refusing to clean locked TravelBag data for {}.", ownerUuid);
-			return;
+			return false;
 		}
 		data.clear();
 		this.refreshOpenBags(ownerUuid);
 		this.storage.save(ownerUuid);
+		return true;
 	}
 
 	public void backupNow() {
@@ -634,12 +648,18 @@ public final class TravelBagMod implements ModInitializer {
 	}
 
 	private void refreshOpenBags(UUID ownerUuid) {
+		this.refreshOpenBags(ownerUuid, null);
+	}
+
+	public void refreshOpenBags(UUID ownerUuid, TravelBagInventory source) {
 		List<TravelBagInventory> inventories = this.openBags.get(ownerUuid);
 		if (inventories == null || inventories.isEmpty()) {
 			return;
 		}
 		for (TravelBagInventory inventory : inventories) {
-			inventory.refreshFromData();
+			if (inventory != source) {
+				inventory.refreshFromData();
+			}
 		}
 	}
 }

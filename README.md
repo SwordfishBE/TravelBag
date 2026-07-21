@@ -44,6 +44,8 @@ It is designed to feel safe on real servers:
 - `/travelbag sort` - Compact and sort your own TravelBag
 - `/travelbag <player>` - Open another player's TravelBag
 - `/travelbag backup` - Create backups of all TravelBag data files
+- `/travelbag restore <player> <latest|previous>` - Preview a valid backup for a locked TravelBag
+- `/travelbag restore <player> <latest|previous> confirm` - Restore the previewed backup within 60 seconds
 - `/travelbag reload` - Reload the config file
 
 Aliases are configurable and default to:
@@ -73,6 +75,7 @@ When LuckPerms support is enabled, TravelBag uses the following nodes:
 - `travelbag.noCooldown`
 - `travelbag.ignoreBlacklist`
 - `travelbag.backup`
+- `travelbag.restore`
 - `travelbag.reload`
 - `travelbag.bypass.gamemode`
 - `travelbag.admin`
@@ -101,6 +104,8 @@ Backups are written as:
 - `<uuid>.backup.1.dat` - newest backup
 - `<uuid>.backup.2.dat` - previous backup
 
+Legacy `<uuid>.backup.dat` files from older TravelBag versions remain available as the latest restore candidate when no rotated latest backup exists.
+
 Backups are created:
 - on server start
 - on `/travelbag reload`
@@ -108,6 +113,8 @@ Backups are created:
 - automatically every 10 minutes, but only if TravelBag data changed since the previous backup
 
 If a bag file cannot be decoded safely, TravelBag also creates a timestamped failure snapshot before refusing further saves for that bag.
+
+Locked bags can only be restored by an administrator with `travelbag.restore` or the umbrella `travelbag.admin` permission. The target player must be offline and the bag must be closed by all viewers. TravelBag validates the selected backup before confirmation, snapshots the current data file, replaces it atomically, verifies the restored data, and rolls back automatically if verification fails.
 
 ---
 

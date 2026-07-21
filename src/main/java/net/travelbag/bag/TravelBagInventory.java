@@ -89,6 +89,7 @@ public final class TravelBagInventory extends SimpleContainer {
 			this.data.setStack(slot, super.getItem(slot).copy());
 		}
 		this.data.markDirty();
+		this.mod.refreshOpenBags(this.ownerUuid, this);
 		this.mod.getStorage().save(this.ownerUuid);
 	}
 }

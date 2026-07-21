@@ -1,7 +1,13 @@
 package net.travelbag.command;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Collection;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.CommandDispatcher;
@@ -16,8 +22,20 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.NameAndId;
 import net.travelbag.TravelBagMod;
+import net.travelbag.storage.TravelBagStorage.BackupInfo;
+import net.travelbag.storage.TravelBagStorage.RestoreResult;
 
 public final class TravelBagCommands {
+	private static final long RESTORE_CONFIRMATION_MILLIS = 60_000L;
+	private static final DateTimeFormatter BACKUP_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z").withZone(ZoneId.systemDefault());
+	private static final Map<RestoreKey, PendingRestore> PENDING_RESTORES = new ConcurrentHashMap<>();
+
+	private record RestoreKey(String actorId, UUID ownerUuid, int backupIndex) {
+	}
+
+	private record PendingRestore(long expiresAtMillis, long backupModifiedAtMillis) {
+	}
+
 	private TravelBagCommands() {
 	}
 
@@ -39,6 +57,11 @@ public final class TravelBagCommands {
 			.then(Commands.literal("reload")
 				.requires(source -> source.getEntity() == null ? mod.getPermissionService().canRunReload(source) : source.getEntity() instanceof ServerPlayer player && mod.getPermissionService().canRunReload(player))
 				.executes(context -> reload(mod, context.getSource())))
+			.then(Commands.literal("restore")
+				.requires(source -> source.getEntity() == null ? mod.getPermissionService().canRunRestore(source) : source.getEntity() instanceof ServerPlayer player && mod.getPermissionService().canRunRestore(player))
+				.then(Commands.argument("player", GameProfileArgument.gameProfile())
+					.then(createRestoreChoice("latest", 1, mod))
+					.then(createRestoreChoice("previous", 2, mod))))
 			.then(Commands.literal("sort")
 				.executes(context -> sortSelf(mod, context.getSource())))
 			.then(Commands.literal("clean")
@@ -71,7 +94,17 @@ public final class TravelBagCommands {
 		if (player == null ? mod.getPermissionService().canRunReload(source) : mod.getPermissionService().canRunReload(player)) {
 			source.sendSuccess(() -> Component.literal("/travelbag reload - Reload the TravelBag config"), false);
 		}
+		if (player == null ? mod.getPermissionService().canRunRestore(source) : mod.getPermissionService().canRunRestore(player)) {
+			source.sendSuccess(() -> Component.literal("/travelbag restore <player> <latest|previous> - Preview and restore a locked TravelBag backup"), false);
+		}
 		return Command.SINGLE_SUCCESS;
+	}
+
+	private static LiteralArgumentBuilder<CommandSourceStack> createRestoreChoice(String name, int backupIndex, TravelBagMod mod) {
+		return Commands.literal(name)
+			.executes(context -> previewRestore(mod, context.getSource(), getSingleProfile(context), backupIndex))
+			.then(Commands.literal("confirm")
+				.executes(context -> confirmRestore(mod, context.getSource(), getSingleProfile(context), backupIndex)));
 	}
 
 	private static int openSelf(TravelBagMod mod, CommandSourceStack source) {
@@ -92,6 +125,10 @@ public final class TravelBagCommands {
 		}
 		if (!mod.getPermissionService().canSortOwn(player)) {
 			source.sendFailure(Component.literal("You do not have permission to sort your TravelBag."));
+			return 0;
+		}
+		if (mod.getStorage().isSaveBlocked(player.getUUID())) {
+			source.sendFailure(Component.literal("Your TravelBag is locked to prevent item loss."));
 			return 0;
 		}
 
@@ -120,7 +157,10 @@ public final class TravelBagCommands {
 			source.sendFailure(Component.literal("You do not have permission to clean your TravelBag."));
 			return 0;
 		}
-		mod.cleanBag(player.getUUID());
+		if (!mod.cleanBag(player.getUUID())) {
+			source.sendFailure(Component.literal("Your TravelBag is locked and cannot be cleaned."));
+			return 0;
+		}
 		source.sendSuccess(() -> Component.literal("Your TravelBag has been cleaned."), false);
 		return Command.SINGLE_SUCCESS;
 	}
@@ -135,7 +175,10 @@ public final class TravelBagCommands {
 			source.sendFailure(Component.literal("You do not have permission to clean another player's TravelBag."));
 			return 0;
 		}
-		mod.cleanBag(profile.id());
+		if (!mod.cleanBag(profile.id())) {
+			source.sendFailure(Component.literal("That TravelBag is locked and cannot be cleaned."));
+			return 0;
+		}
 		source.sendSuccess(() -> Component.literal("Cleaned TravelBag of " + profile.name() + "."), false);
 		return Command.SINGLE_SUCCESS;
 	}
@@ -155,6 +198,73 @@ public final class TravelBagCommands {
 			source.sendFailure(Component.literal("Failed to reload TravelBag config. See server log."));
 			return 0;
 		}
+	}
+
+	private static int previewRestore(TravelBagMod mod, CommandSourceStack source, NameAndId profile, int backupIndex) {
+		if (!canRestoreTarget(mod, source, profile)) {
+			return 0;
+		}
+
+		try {
+			BackupInfo backup = mod.getStorage().inspectBackup(profile.id(), backupIndex);
+			long now = System.currentTimeMillis();
+			PENDING_RESTORES.entrySet().removeIf(entry -> entry.getValue().expiresAtMillis() < now);
+			RestoreKey key = new RestoreKey(getActorId(source), profile.id(), backupIndex);
+			PENDING_RESTORES.put(key, new PendingRestore(now + RESTORE_CONFIRMATION_MILLIS, backup.modifiedAtMillis()));
+
+			String backupName = backupIndex == 1 ? "latest" : "previous";
+			String modifiedAt = BACKUP_TIME_FORMAT.format(Instant.ofEpochMilli(backup.modifiedAtMillis()));
+			source.sendSuccess(() -> Component.literal("Backup is valid: " + backup.fileName() + " from " + modifiedAt + ", " + backup.occupiedSlots() + " occupied slot(s), " + backup.itemCount() + " item(s)."), false);
+			source.sendSuccess(() -> Component.literal("Run /travelbag restore " + profile.name() + " " + backupName + " confirm within 60 seconds to restore it."), false);
+			return Command.SINGLE_SUCCESS;
+		} catch (IOException exception) {
+			source.sendFailure(Component.literal("Cannot restore TravelBag: " + exception.getMessage()));
+			return 0;
+		}
+	}
+
+	private static int confirmRestore(TravelBagMod mod, CommandSourceStack source, NameAndId profile, int backupIndex) {
+		RestoreKey key = new RestoreKey(getActorId(source), profile.id(), backupIndex);
+		PendingRestore pending = PENDING_RESTORES.remove(key);
+		long now = System.currentTimeMillis();
+		if (pending == null || pending.expiresAtMillis() < now) {
+			source.sendFailure(Component.literal("Restore confirmation is missing or expired. Preview the backup again first."));
+			return 0;
+		}
+		if (!canRestoreTarget(mod, source, profile)) {
+			return 0;
+		}
+
+		try {
+			RestoreResult result = mod.getStorage().restoreBackup(profile.id(), backupIndex, pending.backupModifiedAtMillis());
+			String actorName = source.getEntity() instanceof ServerPlayer player ? player.getGameProfile().name() : "console";
+			TravelBagMod.LOGGER.info("[TravelBag] {} restored {} for {} from {}. Recovery snapshot: {}", actorName, result.backup().fileName(), profile.id(), profile.name(), result.recoveryFileName());
+			source.sendSuccess(() -> Component.literal("Restored TravelBag of " + profile.name() + " from " + result.backup().fileName() + "."), true);
+			return Command.SINGLE_SUCCESS;
+		} catch (IOException exception) {
+			source.sendFailure(Component.literal("TravelBag restore failed: " + exception.getMessage()));
+			return 0;
+		}
+	}
+
+	private static boolean canRestoreTarget(TravelBagMod mod, CommandSourceStack source, NameAndId profile) {
+		if (source.getServer().getPlayerList().getPlayer(profile.id()) != null) {
+			source.sendFailure(Component.literal("The target player must be offline before restoring their TravelBag."));
+			return false;
+		}
+		if (mod.hasOpenBag(profile.id())) {
+			source.sendFailure(Component.literal("The TravelBag must be closed by all viewers before it can be restored."));
+			return false;
+		}
+		if (!mod.getStorage().isSaveBlocked(profile.id())) {
+			source.sendFailure(Component.literal("This TravelBag is not locked. Restore is only allowed for locked bags."));
+			return false;
+		}
+		return true;
+	}
+
+	private static String getActorId(CommandSourceStack source) {
+		return source.getEntity() instanceof ServerPlayer player ? player.getUUID().toString() : "console";
 	}
 
 	private static ServerPlayer getPlayer(CommandSourceStack source) {

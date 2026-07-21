@@ -135,12 +135,20 @@ public final class PermissionService {
 		return this.hasAdmin(player) || checkAdminNode(player, "travelbag.reload");
 	}
 
+	public boolean canRunRestore(ServerPlayer player) {
+		return this.hasAdmin(player) || checkAdminNode(player, "travelbag.restore");
+	}
+
 	public boolean canRunBackup(CommandSourceStack source) {
 		return this.hasAdmin(source) || checkAdminNode(source, "travelbag.backup");
 	}
 
 	public boolean canRunReload(CommandSourceStack source) {
 		return this.hasAdmin(source) || checkAdminNode(source, "travelbag.reload");
+	}
+
+	public boolean canRunRestore(CommandSourceStack source) {
+		return this.hasAdmin(source) || checkAdminNode(source, "travelbag.restore");
 	}
 
 	public boolean canBypassGameMode(ServerPlayer player) {
