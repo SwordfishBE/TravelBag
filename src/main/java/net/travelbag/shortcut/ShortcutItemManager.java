@@ -1,6 +1,7 @@
 package net.travelbag.shortcut;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.UUID;
 
 import com.google.common.collect.ImmutableMultimap;
@@ -199,20 +200,13 @@ public final class ShortcutItemManager {
 				continue;
 			}
 
-			BundleContents.Mutable mutable = new BundleContents.Mutable(contents);
-			mutable.clearItems();
-			boolean removedShortcut = false;
-
-			for (ItemStack bundledStack : contents.itemCopyStream().toList()) {
-				if (this.isShortcutItem(bundledStack)) {
-					removedShortcut = true;
-					continue;
-				}
-				mutable.tryInsert(bundledStack.copy());
-			}
+			List<ItemStack> sanitizedContents = contents.itemCopies()
+					.filter(bundledStack -> !this.isShortcutItem(bundledStack))
+					.toList();
+			boolean removedShortcut = sanitizedContents.size() != contents.size();
 
 			if (removedShortcut) {
-				stack.set(DataComponents.BUNDLE_CONTENTS, mutable.toImmutable());
+				stack.set(DataComponents.BUNDLE_CONTENTS, contents.copyWithContents(sanitizedContents.stream()));
 			}
 		}
 	}

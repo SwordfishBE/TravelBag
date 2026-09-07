@@ -27,6 +27,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
+import net.minecraft.util.Prediction;
 import net.minecraft.util.Util;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.SimpleMenuProvider;
@@ -555,7 +556,7 @@ public final class TravelBagMod implements ModInitializer {
 		for (int slot = 0; slot < data.size(); slot++) {
 			ItemStack stack = data.getStack(slot);
 			if (!stack.isEmpty()) {
-				if (player.drop(stack.copy(), true, false) != null) {
+				if (player.drop(stack.copy(), true, Prediction.SERVER_ONLY) != null) {
 					data.setStack(slot, ItemStack.EMPTY);
 					changed = true;
 				} else {
