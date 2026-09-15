@@ -31,8 +31,8 @@
     "travelbag.mixins.json"
   ],
   "depends": {
-    "fabricloader": ">=0.19.3",
-    "minecraft": ">=26.3-pre.1 <26.4-",
+    "fabricloader": ">=0.19.5",
+    "minecraft": ">=26.3 <26.4-",
     "java": ">=25",
     "fabric-api": "*",
     "fabric-permissions-api-v0": "*"
