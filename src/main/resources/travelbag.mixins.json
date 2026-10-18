@@ -3,6 +3,7 @@
   "package": "net.travelbag.mixin",
   "compatibilityLevel": "JAVA_25",
   "mixins": [
+    "ItemEntityAccessor",
     "BundleContentsMixin",
     "BundleItemMixin",
     "ScreenHandlerMixin",

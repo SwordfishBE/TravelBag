@@ -39,6 +39,15 @@ public final class TravelBagCommands {
 	private TravelBagCommands() {
 	}
 
+	public static void clearPendingRestores() {
+		PENDING_RESTORES.clear();
+	}
+
+	public static void expirePendingRestores() {
+		long now = System.currentTimeMillis();
+		PENDING_RESTORES.entrySet().removeIf(entry -> entry.getValue().expiresAtMillis() < now);
+	}
+
 	public static void register(TravelBagMod mod, CommandDispatcher<CommandSourceStack> dispatcher) {
 		dispatcher.register(createRoot("travelbag", mod));
 		for (String alias : mod.getConfig().getAliases()) {
@@ -184,7 +193,10 @@ public final class TravelBagCommands {
 	}
 
 	private static int backup(TravelBagMod mod, CommandSourceStack source) {
-		mod.backupNow();
+		if (!mod.backupNow()) {
+			source.sendFailure(Component.literal("TravelBag backup was incomplete or failed. Check the server log."));
+			return 0;
+		}
 		source.sendSuccess(() -> Component.literal("TravelBag backups created."), false);
 		return Command.SINGLE_SUCCESS;
 	}

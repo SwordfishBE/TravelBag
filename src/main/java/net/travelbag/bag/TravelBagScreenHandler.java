@@ -66,6 +66,9 @@ public final class TravelBagScreenHandler extends AbstractContainerMenu {
 
 	@Override
 	public ItemStack quickMoveStack(Player player, int slotIndex) {
+		if (slotIndex < 0 || slotIndex >= this.slots.size() || !this.inventory.isEditable()) {
+			return ItemStack.EMPTY;
+		}
 		ItemStack moved = ItemStack.EMPTY;
 		Slot slot = this.slots.get(slotIndex);
 		if (slot.hasItem()) {
@@ -76,7 +79,8 @@ public final class TravelBagScreenHandler extends AbstractContainerMenu {
 				if (!this.moveItemStackTo(originalStack, bagSlots, this.slots.size(), true)) {
 					return ItemStack.EMPTY;
 				}
-			} else if (!this.moveItemStackTo(originalStack, 0, bagSlots, false)) {
+			} else if (!this.slots.get(0).mayPlace(originalStack)
+				|| !this.moveItemStackTo(originalStack, 0, bagSlots, false)) {
 				return ItemStack.EMPTY;
 			}
 

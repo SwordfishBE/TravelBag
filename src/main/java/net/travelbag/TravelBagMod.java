@@ -71,6 +71,7 @@ public final class TravelBagMod implements ModInitializer {
 	private ShortcutItemManager shortcutItemManager;
 	private MinecraftServer server;
 	private int autoBackupTicks;
+	private int cacheMaintenanceTicks;
 
 	public static TravelBagMod getInstance() {
 		return instance;
@@ -106,9 +107,15 @@ public final class TravelBagMod implements ModInitializer {
 
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			this.storage.saveAll();
+		});
+		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+			this.storage.close();
 			this.pendingShortcutSyncs.clear();
 			this.openBags.clear();
+			this.lastOpenTimes.clear();
+			TravelBagCommands.clearPendingRestores();
 			this.autoBackupTicks = 0;
+			this.cacheMaintenanceTicks = 0;
 			this.server = null;
 		});
 
@@ -136,6 +143,14 @@ public final class TravelBagMod implements ModInitializer {
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			this.processPendingShortcutSyncs(server);
 			this.processAutoBackups();
+			if (++this.cacheMaintenanceTicks >= 1200) {
+				this.cacheMaintenanceTicks = 0;
+				this.storage.evictUnused(uuid -> server.getPlayerList().getPlayer(uuid) != null || this.hasOpenBag(uuid));
+				long now = Util.getMillis();
+				long cooldown = Math.max(0L, this.getConfig().getCooldown()) * 50L;
+				this.lastOpenTimes.entrySet().removeIf(entry -> now - entry.getValue() >= cooldown);
+				TravelBagCommands.expirePendingRestores();
+			}
 		});
 
 		UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
@@ -584,10 +599,12 @@ public final class TravelBagMod implements ModInitializer {
 		return true;
 	}
 
-	public void backupNow() {
-		this.storage.saveAll();
-		this.storage.createBackups();
-		LOGGER.info("[TravelBag] Manual backup completed.");
+	public boolean backupNow() {
+		boolean success = this.storage.saveAll() && this.storage.createBackups();
+		if (success) {
+			LOGGER.info("[TravelBag] Manual backup completed.");
+		}
+		return success;
 	}
 
 	public void reload() throws IOException {

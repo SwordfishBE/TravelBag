@@ -30,7 +30,7 @@ abstract class ScreenHandlerMixin {
 		Slot clickedSlot = slotIndex >= 0 && slotIndex < this.slots.size() ? this.slots.get(slotIndex) : null;
 		ItemStack clickedStack = clickedSlot == null ? ItemStack.EMPTY : clickedSlot.getItem();
 		ItemStack cursorStack = this.getCarried();
-		ItemStack swapStack = actionType == ContainerInput.SWAP && button >= 0 && button < 9 ? player.getInventory().getItem(button) : ItemStack.EMPTY;
+		ItemStack swapStack = actionType == ContainerInput.SWAP && (button >= 0 && button < 9 || button == 40) ? player.getInventory().getItem(button) : ItemStack.EMPTY;
 
 		boolean clickedShortcut = TravelBagMod.getInstance().getShortcutItemManager().isShortcutItem(clickedStack);
 		boolean cursorShortcut = TravelBagMod.getInstance().getShortcutItemManager().isShortcutItem(cursorStack);

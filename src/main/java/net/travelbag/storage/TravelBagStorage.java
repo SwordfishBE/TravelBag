@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -75,7 +76,36 @@ public final class TravelBagStorage {
 	}
 
 	public PlayerBagData getOrLoad(UUID uuid) {
+		if (this.server == null) {
+			throw new IllegalStateException("TravelBag storage is not attached to a server.");
+		}
 		return this.cache.computeIfAbsent(uuid, this::loadInternal);
+	}
+
+	public void evictUnused(Predicate<UUID> inUse) {
+		this.cache.entrySet().removeIf(entry -> {
+			if (inUse.test(entry.getKey())) {
+				return false;
+			}
+			PlayerBagData data = entry.getValue();
+			if (data.isSaveBlocked()) {
+				return true; // The unchanged source file remains authoritative for locked bags.
+			}
+			this.save(entry.getKey(), data);
+			return !data.isDirty();
+		});
+	}
+
+	public void close() {
+		try {
+			if (!this.saveAll()) {
+				TravelBagMod.LOGGER.error("[TravelBag] Some bags could not be saved before shutdown. Check earlier storage errors.");
+			}
+		} finally {
+			this.cache.clear();
+			this.server = null;
+			this.changesSinceBackup = false;
+		}
 	}
 
 	public boolean isSaveBlocked(UUID uuid) {
@@ -89,13 +119,19 @@ public final class TravelBagStorage {
 		}
 	}
 
-	public void saveAll() {
+	public boolean saveAll() {
+		boolean success = true;
 		for (Map.Entry<UUID, PlayerBagData> entry : this.cache.entrySet()) {
 			this.save(entry.getKey(), entry.getValue());
+			if (entry.getValue().isDirty() && !entry.getValue().isSaveBlocked()) {
+				success = false;
+			}
 		}
+		return success;
 	}
 
-	public void createBackups() {
+	public boolean createBackups() {
+		boolean success = true;
 		try {
 			Files.createDirectories(this.playerDirectory);
 			try (DirectoryStream<Path> stream = Files.newDirectoryStream(this.playerDirectory)) {
@@ -103,13 +139,20 @@ public final class TravelBagStorage {
 					if (!Files.isRegularFile(path) || !this.isPrimaryDataFile(path)) {
 						continue;
 					}
-					this.createBackup(path);
+					try {
+						this.createBackup(path);
+					} catch (IOException exception) {
+						success = false;
+						TravelBagMod.LOGGER.warn("[TravelBag] Failed to back up {}.", path, exception);
+					}
 				}
 			}
-			this.changesSinceBackup = false;
 		} catch (IOException exception) {
+			success = false;
 			TravelBagMod.LOGGER.warn("[TravelBag] Failed to create TravelBag backups.", exception);
 		}
+		this.changesSinceBackup = !success;
+		return success;
 	}
 
 	public boolean hasChangesSinceBackup() {
@@ -210,7 +253,7 @@ public final class TravelBagStorage {
 
 			data.setShortcutGranted(root.getBoolean("ShortcutGranted").orElse(false));
 			data.clearDirty();
-			ListTag items = root.getList("Items").orElseGet(ListTag::new);
+			ListTag items = readItems(root);
 			DynamicOps<Tag> ops = this.createRegistryAwareNbtOps();
 			boolean[] seenSlots = new boolean[data.size()];
 			int elementIndex = 0;
@@ -288,11 +331,7 @@ public final class TravelBagStorage {
 				CompoundTag stackTag = new CompoundTag();
 				stackTag.putInt("Slot", currentSlot);
 				DataResult<Tag> encodeResult = ItemStack.OPTIONAL_CODEC.encodeStart(ops, stack);
-				Optional<Tag> encodedTag = encodeResult.resultOrPartial(error -> TravelBagMod.LOGGER.error("[TravelBag] Failed to encode bag slot {} for {}: {}", currentSlot, uuid, error));
-				if (encodedTag.isEmpty()) {
-					throw new IllegalStateException("Failed to encode TravelBag slot " + currentSlot + " for " + uuid);
-				}
-				stackTag.put("Stack", encodedTag.get());
+				stackTag.put("Stack", requireCompleteEncoding(encodeResult));
 				items.add(stackTag);
 			}
 			root.put("Items", items);
@@ -342,6 +381,19 @@ public final class TravelBagStorage {
 		return new ValidatedBackup(backup, info);
 	}
 
+	private static ListTag readItems(CompoundTag root) throws IOException {
+		// Older files may omit DataVersion; the Items list is part of the original format.
+		if (root.contains("DataVersion") && root.getInt("DataVersion").orElse(-1) != DATA_VERSION) {
+			throw new IOException("Unsupported TravelBag DataVersion.");
+		}
+		return root.getList("Items").orElseThrow(() -> new IOException("Missing or invalid Items list."));
+	}
+
+	private static Tag requireCompleteEncoding(DataResult<Tag> result) throws IOException {
+		return result.result().orElseThrow(() -> new IOException("Incomplete item encoding: "
+			+ result.error().map(error -> error.message()).orElse("no encoded value")));
+	}
+
 	private Path resolveBackupPath(UUID uuid, int index) {
 		if (index < 1 || index > MAX_BACKUPS_PER_PLAYER) {
 			return null;
@@ -380,12 +432,11 @@ public final class TravelBagStorage {
 
 	private void createBackup(Path source) throws IOException {
 		Path newest = this.toBackupPath(source, 1);
-		if (Files.isRegularFile(newest) && Files.mismatch(source, newest) == -1L) {
-			return;
-		}
 		DecodedBag decoded = this.decodeFile(source);
 		if (!decoded.isValid()) {
-			TravelBagMod.LOGGER.error("[TravelBag] Refusing to back up invalid TravelBag data file {}. Errors: {}", source.getFileName(), decoded.errorSummary());
+			throw new IOException("Refusing to back up invalid data: " + decoded.errorSummary(), decoded.exception());
+		}
+		if (Files.isRegularFile(newest) && Files.mismatch(source, newest) == -1L) {
 			return;
 		}
 

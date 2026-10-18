@@ -7,6 +7,7 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
 import net.travelbag.TravelBagMod;
+import net.travelbag.mixin.ItemEntityAccessor;
 
 public final class TravelBagPickupService {
 	private final TravelBagMod mod;
@@ -33,6 +34,9 @@ public final class TravelBagPickupService {
 	}
 
 	private void collectFor(ServerPlayer player) {
+		if (!player.isAlive() || player.isSpectator()) {
+			return;
+		}
 		if (!this.mod.getPermissionService().canAutoPickup(player)) {
 			return;
 		}
@@ -42,6 +46,10 @@ public final class TravelBagPickupService {
 
 		double radius = this.mod.getConfig().getCollectRadius();
 		for (ItemEntity itemEntity : player.level().getEntitiesOfClass(ItemEntity.class, player.getBoundingBox().inflate(radius), entity -> entity.isAlive() && !entity.getItem().isEmpty())) {
+			java.util.UUID target = ((ItemEntityAccessor) itemEntity).travelbag$getPickupTarget();
+			if (itemEntity.hasPickUpDelay() || target != null && !target.equals(player.getUUID())) {
+				continue;
+			}
 			ItemStack stack = itemEntity.getItem();
 			if (!this.mod.canStoreItem(player.getUUID(), stack.copy())) {
 				continue;
