@@ -1,0 +1,17 @@
+gradle.beforeProject { project ->
+    project.layout.buildDirectory.set(project.layout.projectDirectory.dir('build-moonrise-compat'))
+    project.afterEvaluate {
+        project.fabricApi.configureTests {
+            createSourceSet = true
+            modId = 'travelbag-compat-test'
+            enableGameTests = true
+            enableClientGameTests = false
+        }
+        if (project.hasProperty('compatMoonrise')) {
+            project.dependencies.add('gametestRuntimeOnly', project.files('build-moonrise-compat/compat/Moonrise-Fabric-1.2.1+e53de7f.jar'))
+            project.tasks.named('runGameTest', JavaExec) {
+                jvmArgs '-Dtravelbag.compat.moonrise=true'
+            }
+        }
+    }
+}

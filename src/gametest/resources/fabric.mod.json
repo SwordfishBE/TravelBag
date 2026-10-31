@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "travelbag-compat-test",
+  "version": "1.0.0",
+  "name": "TravelBag Compatibility Tests",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-gametest": ["net.travelbag.TravelBagCompatibilityTests"]
+  },
+  "depends": {
+    "travelbag": "*",
+    "fabric-gametest-api-v1": "*"
+  }
+}

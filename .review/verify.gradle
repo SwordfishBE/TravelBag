@@ -1,0 +1,17 @@
+gradle.beforeProject { project ->
+    project.layout.buildDirectory.set(project.layout.projectDirectory.dir('build-review-2026-10-18'))
+    project.afterEvaluate {
+        def compileProbe = project.tasks.register('compileReviewProbe', JavaCompile) {
+            dependsOn project.tasks.named('classes')
+            source = project.files('.review/ReviewProbe.java')
+            classpath = project.sourceSets.main.compileClasspath + project.sourceSets.main.output
+            destinationDirectory = project.layout.buildDirectory.dir('review-classes')
+            options.release = 25
+        }
+        project.tasks.register('reviewProbe', JavaExec) {
+            dependsOn compileProbe
+            classpath = project.sourceSets.main.runtimeClasspath + project.files(compileProbe.flatMap { it.destinationDirectory })
+            mainClass = 'ReviewProbe'
+        }
+    }
+}

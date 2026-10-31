@@ -1,0 +1,11 @@
+gradle.beforeProject { project ->
+    project.layout.buildDirectory.set(project.layout.projectDirectory.dir('build-26.4-snapshot-6'))
+    project.afterEvaluate {
+        project.fabricApi.configureTests {
+            createSourceSet = true
+            modId = 'travelbag-compat-test'
+            enableGameTests = true
+            enableClientGameTests = false
+        }
+    }
+}

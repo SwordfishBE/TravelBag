@@ -19,13 +19,13 @@ import com.google.gson.JsonParser;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.Version;
 import net.fabricmc.loader.api.VersionParsingException;
+import net.minecraft.SharedConstants;
 import net.travelbag.TravelBagMod;
 
 public final class ModrinthUpdateChecker {
 	private static final String PROJECT_ID = "mBHOL0vT";
 	private static final String RELEASE = "release";
 	private static final String FABRIC = "fabric";
-	private static final String MINECRAFT_MOD_ID = "minecraft";
 	private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
 	private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
 		.connectTimeout(REQUEST_TIMEOUT)
@@ -96,7 +96,6 @@ public final class ModrinthUpdateChecker {
 
 		JsonArray versions = root.getAsJsonArray();
 		VersionCandidate newestCompatibleRelease = null;
-		VersionCandidate newestRelease = null;
 
 		for (JsonElement versionElement : versions) {
 			if (!versionElement.isJsonObject()) {
@@ -120,7 +119,6 @@ public final class ModrinthUpdateChecker {
 			}
 
 			VersionCandidate candidate = new VersionCandidate(versionNumber, publishedAt);
-			newestRelease = newestOf(newestRelease, candidate);
 
 			if (jsonArrayContains(versionObject, "loaders", FABRIC)
 				&& jsonArrayContains(versionObject, "game_versions", minecraftVersion)) {
@@ -128,7 +126,7 @@ public final class ModrinthUpdateChecker {
 			}
 		}
 
-		return Optional.ofNullable(newestCompatibleRelease != null ? newestCompatibleRelease : newestRelease);
+		return Optional.ofNullable(newestCompatibleRelease);
 	}
 
 	private static String getString(JsonObject object, String key) {
@@ -191,10 +189,7 @@ public final class ModrinthUpdateChecker {
 	}
 
 	private static String currentMinecraftVersion() {
-		return FabricLoader.getInstance()
-			.getModContainer(MINECRAFT_MOD_ID)
-			.map(container -> container.getMetadata().getVersion().getFriendlyString())
-			.orElse("unknown");
+		return SharedConstants.getCurrentVersion().id();
 	}
 
 	private static boolean isNewerVersion(String candidate, String current) {
