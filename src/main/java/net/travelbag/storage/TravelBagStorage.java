@@ -10,6 +10,8 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -33,11 +35,186 @@ public final class TravelBagStorage {
 	private static final int MAX_BACKUPS_PER_PLAYER = 2;
 	private final Path playerDirectory;
 	private final Map<UUID, PlayerBagData> cache = new ConcurrentHashMap<>();
+	private final java.util.Set<UUID> failedWrites = ConcurrentHashMap.newKeySet();
 	private MinecraftServer server;
 	private volatile boolean changesSinceBackup;
 
 	public TravelBagStorage(Path playerDirectory) {
 		this.playerDirectory = playerDirectory;
+	}
+
+	public static Path resolvePlayerDirectory(boolean dedicatedServer, Path configDirectory, Path worldDirectory) {
+		return (dedicatedServer ? configDirectory : worldDirectory.resolve(TravelBagMod.MOD_ID)).resolve("players");
+	}
+
+	public Path getPlayerDirectory() {
+		return this.playerDirectory;
+	}
+
+	public record LegacyBagInfo(String fingerprint, int occupiedSlots, long itemCount) {
+	}
+
+	public LegacyBagInfo inspectLegacyUpgrade(UUID uuid, int backupIndex, boolean legacySounds) throws IOException {
+		Path path = this.upgradePath(uuid, backupIndex);
+		String before = fingerprint(path);
+		DecodedBag decoded = this.decodeFile(path, legacySounds ? ItemDataMigration.LEGACY_26_3_VERSION : ItemDataMigration.currentVersion());
+		if (!decoded.isValid()) {
+			throw new IOException("Cannot upgrade this file safely: " + decoded.errorSummary(), decoded.exception());
+		}
+		if (!before.equals(fingerprint(path))) {
+			throw new IOException("The file changed during preview.");
+		}
+		int slots = 0;
+		long items = 0;
+		for (int slot = 0; slot < decoded.data().size(); slot++) {
+			if (!decoded.data().getStack(slot).isEmpty()) {
+				slots++;
+				items += decoded.data().getStack(slot).getCount();
+			}
+		}
+		return new LegacyBagInfo(before, slots, items);
+	}
+
+	public synchronized Path upgradeLegacyFile(UUID uuid, int backupIndex, boolean legacySounds, String expectedFingerprint) throws IOException {
+		if (!this.getOrLoad(uuid).isSaveBlocked()) {
+			throw new IOException("The bag must be locked before choosing a legacy data version.");
+		}
+		Path target = this.upgradePath(uuid, backupIndex);
+		if (!this.inspectLegacyUpgrade(uuid, backupIndex, legacySounds).fingerprint().equals(expectedFingerprint)) {
+			throw new IOException("The file changed after preview. Preview it again.");
+		}
+		CompoundTag root;
+		try (InputStream input = Files.newInputStream(target)) {
+			root = NbtIo.readCompressed(input, NbtAccounter.unlimitedHeap());
+		}
+		root.putInt(ItemDataMigration.VERSION_KEY, legacySounds ? ItemDataMigration.LEGACY_26_3_VERSION : ItemDataMigration.currentVersion());
+		Path temp = Files.createTempFile(this.playerDirectory, uuid + ".upgrade-", ".tmp");
+		try {
+			try (OutputStream output = Files.newOutputStream(temp)) {
+				NbtIo.writeCompressed(root, output);
+			}
+			DecodedBag verified = this.decodeFile(temp);
+			if (!verified.isValid() || !fingerprint(target).equals(expectedFingerprint)) {
+				throw new IOException("Upgrade verification failed or the original changed.");
+			}
+			Path recovery = this.createSnapshot(target, "pre-upgrade");
+			Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			if (backupIndex == 0) {
+				this.cache.put(uuid, verified.data());
+				this.failedWrites.remove(uuid);
+				this.changesSinceBackup = true;
+			}
+			return recovery;
+		} finally {
+			Files.deleteIfExists(temp);
+		}
+	}
+
+	private Path upgradePath(UUID uuid, int backupIndex) throws IOException {
+		Path path = backupIndex == 0 ? this.getPlayerPath(uuid) : this.resolveBackupPath(uuid, backupIndex);
+		if (path == null || !Files.isRegularFile(path)) {
+			throw new IOException("The selected TravelBag file does not exist.");
+		}
+		return path;
+	}
+
+	public LegacyBagInfo inspectLegacyBag(UUID uuid, Path legacyDirectory) throws IOException {
+		Path source = legacyDirectory.resolve(uuid + ".dat");
+		if (!Files.isRegularFile(source)) {
+			throw new IOException("No old central TravelBag was found for this player.");
+		}
+		String before = fingerprint(source);
+		DecodedBag decoded = this.decodeFile(source);
+		if (!decoded.isValid()) {
+			throw new IOException("The old TravelBag cannot be decoded safely: " + decoded.errorSummary(), decoded.exception());
+		}
+		if (!before.equals(fingerprint(source))) {
+			throw new IOException("The old TravelBag changed while being inspected. Try again.");
+		}
+		int slots = 0;
+		long items = 0;
+		for (int slot = 0; slot < decoded.data().size(); slot++) {
+			ItemStack stack = decoded.data().getStack(slot);
+			if (!stack.isEmpty()) {
+				slots++;
+				items += stack.getCount();
+			}
+		}
+		return new LegacyBagInfo(before, slots, items);
+	}
+
+	public synchronized Path migrateLegacyBag(UUID uuid, Path legacyDirectory, String expectedFingerprint) throws IOException {
+		Path source = legacyDirectory.resolve(uuid + ".dat");
+		Path target = this.getPlayerPath(uuid);
+		if (source.toAbsolutePath().normalize().equals(target.toAbsolutePath().normalize())) {
+			throw new IOException("Migration requires separate world storage.");
+		}
+		PlayerBagData current = this.getOrLoad(uuid);
+		if (current.isSaveBlocked() || !current.isEmpty()) {
+			throw new IOException("The current world's TravelBag must be empty and unlocked.");
+		}
+		if (!this.inspectLegacyBag(uuid, legacyDirectory).fingerprint().equals(expectedFingerprint)) {
+			throw new IOException("The old TravelBag changed after preview. Preview it again.");
+		}
+		Files.createDirectories(this.playerDirectory);
+		Path temp = Files.createTempFile(this.playerDirectory, uuid + ".migration-", ".tmp");
+		Path archive = source.resolveSibling(uuid + ".migrated." + UUID.randomUUID() + ".dat");
+		boolean claimed = false;
+		try {
+			Files.copy(source, temp, StandardCopyOption.REPLACE_EXISTING);
+			DecodedBag imported = this.decodeFile(temp);
+			if (!imported.isValid() || !fingerprint(temp).equals(expectedFingerprint)) {
+				throw new IOException("Staged migration data failed verification.");
+			}
+			if (Files.exists(target)) {
+				this.createSnapshot(target, "pre-migration");
+			}
+			// Claim the source first: another world must never import the same active file.
+			Files.move(source, archive, StandardCopyOption.ATOMIC_MOVE);
+			claimed = true;
+			if (!fingerprint(archive).equals(expectedFingerprint)) {
+				throw new IOException("The old TravelBag changed during migration.");
+			}
+			Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			this.cache.put(uuid, imported.data());
+			this.failedWrites.remove(uuid);
+			this.changesSinceBackup = true;
+			return archive;
+		} catch (Exception failure) {
+			if (claimed) {
+				try {
+					// Do not replace any file that appeared at the original path meanwhile.
+					if (Files.exists(source)) {
+						throw new IOException("The original migration source path is occupied.");
+					}
+					Files.move(archive, source, StandardCopyOption.ATOMIC_MOVE);
+				} catch (IOException rollbackFailure) {
+					failure.addSuppressed(rollbackFailure);
+					TravelBagMod.LOGGER.error("[TravelBag] Migration rollback failed. Original data is preserved at {}.", archive, rollbackFailure);
+				}
+			}
+			throw new IOException("TravelBag migration failed. Check the log before retrying.", failure);
+		} finally {
+			try {
+				Files.deleteIfExists(temp);
+			} catch (IOException exception) {
+				TravelBagMod.LOGGER.warn("[TravelBag] Could not remove migration staging file {}.", temp, exception);
+			}
+		}
+	}
+
+	private static String fingerprint(Path path) throws IOException {
+		try (InputStream input = Files.newInputStream(path)) {
+			MessageDigest digest = MessageDigest.getInstance("SHA-256");
+			byte[] buffer = new byte[8192];
+			int read;
+			while ((read = input.read(buffer)) != -1) {
+				digest.update(buffer, 0, read);
+			}
+			return java.util.HexFormat.of().formatHex(digest.digest());
+		} catch (NoSuchAlgorithmException exception) {
+			throw new IllegalStateException("SHA-256 is unavailable.", exception);
+		}
 	}
 
 	public record BackupInfo(int index, String fileName, long modifiedAtMillis, int occupiedSlots, long itemCount) {
@@ -89,10 +266,15 @@ public final class TravelBagStorage {
 			}
 			PlayerBagData data = entry.getValue();
 			if (data.isSaveBlocked()) {
+				this.failedWrites.remove(entry.getKey());
 				return true; // The unchanged source file remains authoritative for locked bags.
 			}
 			this.save(entry.getKey(), data);
-			return !data.isDirty();
+			if (!data.isDirty()) {
+				this.failedWrites.remove(entry.getKey());
+				return true;
+			}
+			return false;
 		});
 	}
 
@@ -103,6 +285,7 @@ public final class TravelBagStorage {
 			}
 		} finally {
 			this.cache.clear();
+			this.failedWrites.clear();
 			this.server = null;
 			this.changesSinceBackup = false;
 		}
@@ -112,11 +295,13 @@ public final class TravelBagStorage {
 		return this.getOrLoad(uuid).isSaveBlocked();
 	}
 
-	public void save(UUID uuid) {
+	public boolean hasWriteFailure(UUID uuid) {
+		return this.failedWrites.contains(uuid);
+	}
+
+	public boolean save(UUID uuid) {
 		PlayerBagData data = this.cache.get(uuid);
-		if (data != null) {
-			this.save(uuid, data);
-		}
+		return data == null || this.save(uuid, data);
 	}
 
 	public boolean saveAll() {
@@ -191,6 +376,7 @@ public final class TravelBagStorage {
 			}
 
 			this.cache.put(uuid, restored.data());
+			this.failedWrites.remove(uuid);
 			return new RestoreResult(validatedBackup.info(), recovery.getFileName().toString());
 		} catch (Exception restoreFailure) {
 			try {
@@ -227,6 +413,9 @@ public final class TravelBagStorage {
 
 		String reason = "TravelBag data could not be safely decoded from " + path.getFileName() + ". Saving is blocked to prevent item loss.";
 		decoded.data().blockSaving(reason);
+		if (decoded.exception() instanceof ItemDataMigration.ChoiceRequiredException) {
+			decoded.data().requireLegacyVersionChoice();
+		}
 		this.createFailureSnapshot(path, decoded.exception() == null ? "load-failed" : "load-exception");
 		if (decoded.exception() == null) {
 			TravelBagMod.LOGGER.error("[TravelBag] {} Errors: {}", reason, decoded.errorSummary());
@@ -237,6 +426,10 @@ public final class TravelBagStorage {
 	}
 
 	private DecodedBag decodeFile(Path path) {
+		return this.decodeFile(path, null);
+	}
+
+	private DecodedBag decodeFile(Path path, Integer chosenVersion) {
 		PlayerBagData data = new PlayerBagData();
 		List<String> errors = new ArrayList<>();
 		if (this.server == null) {
@@ -250,6 +443,13 @@ public final class TravelBagStorage {
 				errors.add("empty root tag");
 				return new DecodedBag(data, errors, null);
 			}
+			if (chosenVersion != null) {
+				if (root.contains(ItemDataMigration.VERSION_KEY)) {
+					throw new IOException("This file already records a Minecraft data version.");
+				}
+				root.putInt(ItemDataMigration.VERSION_KEY, chosenVersion);
+			}
+			Integer minecraftVersion = ItemDataMigration.readVersion(root);
 
 			data.setShortcutGranted(root.getBoolean("ShortcutGranted").orElse(false));
 			data.clearDirty();
@@ -285,7 +485,7 @@ public final class TravelBagStorage {
 					continue;
 				}
 
-				DataResult<ItemStack> parseResult = ItemStack.OPTIONAL_CODEC.parse(ops, stackTag);
+				DataResult<ItemStack> parseResult = ItemStack.OPTIONAL_CODEC.parse(ops, ItemDataMigration.upgradeStack(stackTag, minecraftVersion));
 				Optional<ItemStack> parsedStack = parseResult.resultOrPartial(error -> errors.add("slot " + currentSlot + ": " + error));
 				if (parsedStack.isPresent() && parsedStack.get().isEmpty()) {
 					errors.add("slot " + currentSlot + ": decoded to an empty item stack");
@@ -302,13 +502,16 @@ public final class TravelBagStorage {
 		}
 	}
 
-	private void save(UUID uuid, PlayerBagData data) {
-		if (this.server == null || data == null || !data.isDirty()) {
-			return;
+	private boolean save(UUID uuid, PlayerBagData data) {
+		if (data == null || !data.isDirty()) {
+			return true;
+		}
+		if (this.server == null) {
+			return false;
 		}
 		if (data.isSaveBlocked()) {
 			TravelBagMod.LOGGER.error("[TravelBag] Refusing to save locked TravelBag data for {}. {}", uuid, data.getSaveBlockReason());
-			return;
+			return false;
 		}
 
 		Path target = this.getPlayerPath(uuid);
@@ -317,6 +520,7 @@ public final class TravelBagStorage {
 			Files.createDirectories(this.playerDirectory);
 			CompoundTag root = new CompoundTag();
 			root.putInt("DataVersion", DATA_VERSION);
+			root.putInt(ItemDataMigration.VERSION_KEY, ItemDataMigration.currentVersion());
 			root.putBoolean("ShortcutGranted", data.isShortcutGranted());
 
 			ListTag items = new ListTag();
@@ -347,13 +551,20 @@ public final class TravelBagStorage {
 			Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
 			data.clearDirty();
 			this.changesSinceBackup = true;
+			this.failedWrites.remove(uuid);
+			return true;
 		} catch (Exception exception) {
 			try {
 				Files.deleteIfExists(temp);
 			} catch (IOException cleanupFailure) {
 				exception.addSuppressed(cleanupFailure);
 			}
-			TravelBagMod.LOGGER.warn("[TravelBag] Failed to save TravelBag data for {}", uuid, exception);
+			if (this.failedWrites.add(uuid)) {
+				TravelBagMod.LOGGER.warn("[TravelBag] Failed to save TravelBag data for {}. Repeated failures are logged at DEBUG until a save succeeds.", uuid, exception);
+			} else {
+				TravelBagMod.LOGGER.debug("[TravelBag] Still unable to save TravelBag data for {}.", uuid, exception);
+			}
+			return false;
 		}
 	}
 

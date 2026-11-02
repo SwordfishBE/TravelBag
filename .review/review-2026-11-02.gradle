@@ -1,0 +1,4 @@
+gradle.beforeProject { project ->
+    project.layout.buildDirectory.set(project.layout.projectDirectory.dir('build-review-2026-11-02'))
+    // Original defect probes remain as review history; current regressions live in src/gametest.
+}

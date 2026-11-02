@@ -170,6 +170,7 @@ public class TravelBagCompatibilityTests {
     public void shiftClickAndReadOnlyProtection(GameTestHelper helper) {
         var mod = TravelBagMod.getInstance();
         var player = helper.makeMockServerPlayerInLevel();
+        player.setGameMode(net.minecraft.world.level.GameType.SURVIVAL);
         var data = mod.getStorage().getOrLoad(player.getUUID());
         data.setStack(0, new ItemStack(Items.DIAMOND, 10));
         player.getInventory().setItem(9, new ItemStack(Items.DIAMOND, 5));
@@ -202,6 +203,7 @@ public class TravelBagCompatibilityTests {
         boolean enabled = config.isItemFilterEnabled();
         List<String> filtered = config.getFilteredMaterials();
         var player = helper.makeMockServerPlayerInLevel();
+        player.setGameMode(net.minecraft.world.level.GameType.SURVIVAL);
         var data = mod.getStorage().getOrLoad(player.getUUID());
         data.setStack(0, new ItemStack(Items.DIAMOND, 10));
         player.getInventory().setItem(9, new ItemStack(Items.DIAMOND, 5));

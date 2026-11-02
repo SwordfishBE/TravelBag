@@ -1,21 +1,34 @@
 package net.travelbag.bag;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Supplier;
+
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.network.chat.Component;
+import net.travelbag.TravelBagMod;
 
 public final class TravelBagScreenHandler extends AbstractContainerMenu {
 	private static final int BAG_COLUMNS = 9;
+	private static final ThreadLocal<TravelBagScreenHandler> ACTIVE_EDIT = new ThreadLocal<>();
 	private final TravelBagInventory inventory;
 	private final int rows;
+	private final Player viewer;
+	private final List<ItemEntity> transactionDrops = new ArrayList<>();
+	private boolean editing;
+	private boolean dropFailed;
 
 	public TravelBagScreenHandler(int syncId, Inventory playerInventory, TravelBagInventory inventory) {
 		super(resolveType(inventory.getRows()), syncId);
 		this.inventory = inventory;
 		this.rows = inventory.getRows();
+		this.viewer = playerInventory.player;
 		checkContainerSize(inventory, 54);
 		inventory.startOpen(playerInventory.player);
 		this.addBagSlots();
@@ -66,6 +79,10 @@ public final class TravelBagScreenHandler extends AbstractContainerMenu {
 
 	@Override
 	public ItemStack quickMoveStack(Player player, int slotIndex) {
+		return this.editing ? this.moveStack(player, slotIndex) : this.transact(player, () -> this.moveStack(player, slotIndex));
+	}
+
+	private ItemStack moveStack(Player player, int slotIndex) {
 		if (slotIndex < 0 || slotIndex >= this.slots.size() || !this.inventory.isEditable()) {
 			return ItemStack.EMPTY;
 		}
@@ -91,6 +108,81 @@ public final class TravelBagScreenHandler extends AbstractContainerMenu {
 			}
 		}
 		return moved;
+	}
+
+	@Override
+	public void clicked(int slot, int button, net.minecraft.world.inventory.ContainerInput input, Player player) {
+		this.transact(player, () -> {
+			super.clicked(slot, button, input, player);
+			return ItemStack.EMPTY;
+		});
+	}
+
+	@Override
+	public void setSelectedBundleItemIndex(int slot, int selected) {
+		this.transact(this.viewer, () -> {
+			super.setSelectedBundleItemIndex(slot, selected);
+			return ItemStack.EMPTY;
+		});
+	}
+
+	public static void recordDrop(Player player, ItemEntity entity, boolean hadItems) {
+		TravelBagScreenHandler active = ACTIVE_EDIT.get();
+		if (active != null && active.viewer == player) {
+			if (entity != null) active.transactionDrops.add(entity);
+			else if (hadItems) active.dropFailed = true;
+		}
+	}
+
+	private ItemStack transact(Player player, Supplier<ItemStack> action) {
+		if (!this.stillValid(player) || !TravelBagMod.getInstance().getStorage().save(this.inventory.getOwnerUuid())) {
+			this.resetQuickCraft();
+			this.broadcastFullState();
+			return ItemStack.EMPTY;
+		}
+		if (ACTIVE_EDIT.get() != null) {
+			return ItemStack.EMPTY;
+		}
+		var before = this.inventory.getData().snapshot();
+		List<ItemStack> playerItems = new ArrayList<>();
+		for (int slot = 0; slot < player.getInventory().getContainerSize(); slot++) {
+			playerItems.add(player.getInventory().getItem(slot).copy());
+		}
+		ItemStack cursor = this.getCarried().copy();
+		boolean committed = false;
+		this.editing = true;
+		this.dropFailed = false;
+		this.inventory.beginEdit();
+		ACTIVE_EDIT.set(this);
+		try {
+			ItemStack result = action.get();
+			if (!this.dropFailed && this.inventory.commitEdit()) {
+				committed = true;
+				this.inventory.publishChanges();
+				return result;
+			}
+			player.sendSystemMessage(Component.literal("TravelBag could not complete this transfer. Your items have been returned. Check the server log."));
+			return ItemStack.EMPTY;
+		} finally {
+			try {
+				if (!committed) {
+					this.transactionDrops.forEach(ItemEntity::discard);
+					this.inventory.getData().restore(before);
+					this.inventory.refreshFromData();
+					for (int slot = 0; slot < playerItems.size(); slot++) {
+						player.getInventory().setItem(slot, playerItems.get(slot));
+					}
+					this.setCarried(cursor);
+					this.resetQuickCraft();
+				}
+			} finally {
+				this.transactionDrops.clear();
+				ACTIVE_EDIT.remove();
+				this.inventory.endEdit();
+				this.editing = false;
+				if (!committed) this.broadcastFullState();
+			}
+		}
 	}
 
 

@@ -112,6 +112,7 @@ public final class TravelBagClothConfigScreenFactory {
 		pickup.addEntry(entries.startDoubleField(Component.literal("Pickup radius"), workingCopy.getCollectRadius())
 			.setDefaultValue(source.getCollectRadius())
 			.setMin(0.25D)
+			.setMax(TravelBagConfig.MAX_COLLECT_RADIUS)
 			.setSaveConsumer(workingCopy::setCollectRadius)
 			.build());
 

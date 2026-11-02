@@ -4,10 +4,25 @@ import net.minecraft.core.NonNullList;
 import net.minecraft.world.item.ItemStack;
 
 public final class PlayerBagData {
+	public record Snapshot(java.util.List<ItemStack> stacks, boolean dirty, boolean shortcutGranted) {
+	}
+
+	public Snapshot snapshot() {
+		return new Snapshot(this.stacks.stream().map(ItemStack::copy).toList(), this.dirty, this.shortcutGranted);
+	}
+
+	public void restore(Snapshot snapshot) {
+		for (int slot = 0; slot < this.stacks.size(); slot++) {
+			this.stacks.set(slot, snapshot.stacks().get(slot).copy());
+		}
+		this.dirty = snapshot.dirty();
+		this.shortcutGranted = snapshot.shortcutGranted();
+	}
 	private final NonNullList<ItemStack> stacks = NonNullList.withSize(54, ItemStack.EMPTY);
 	private boolean dirty;
 	private boolean shortcutGranted;
 	private boolean saveBlocked;
+	private boolean legacyVersionChoiceRequired;
 	private String saveBlockReason = "";
 
 	public int size() {
@@ -41,6 +56,14 @@ public final class PlayerBagData {
 
 	public String getSaveBlockReason() {
 		return this.saveBlockReason;
+	}
+
+	public boolean isLegacyVersionChoiceRequired() {
+		return this.legacyVersionChoiceRequired;
+	}
+
+	void requireLegacyVersionChoice() {
+		this.legacyVersionChoiceRequired = true;
 	}
 
 	public void blockSaving(String reason) {

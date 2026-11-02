@@ -10,6 +10,7 @@ import java.util.stream.Collectors;
 import net.minecraft.world.level.GameType;
 
 public final class TravelBagConfig {
+	public static final double MAX_COLLECT_RADIUS = 16.0D;
 	private String travelBagTitleOther = "&b{OwnerName}'s TravelBag";
 	private String travelBagTitle = "&bTravelBag";
 	private boolean dropOnDeath = true;
@@ -36,7 +37,8 @@ public final class TravelBagConfig {
 		this.size = clamp(this.size, 1, 6);
 		this.cooldown = Math.max(0, this.cooldown);
 		this.checkInterval = Math.max(1, this.checkInterval);
-		this.collectRadius = Math.max(0.25D, this.collectRadius);
+		this.collectRadius = Double.isFinite(this.collectRadius)
+			? Math.max(0.25D, Math.min(MAX_COLLECT_RADIUS, this.collectRadius)) : 1.5D;
 		this.shortcutPreferredSlot = clamp(this.shortcutPreferredSlot, 0, 35);
 		this.travelBagOpenSound = this.travelBagOpenSound == null ? "block.crafter.craft" : this.travelBagOpenSound.trim().toLowerCase(Locale.ROOT);
 		if (this.travelBagOpenSound.isBlank()) {
@@ -179,7 +181,8 @@ public final class TravelBagConfig {
 	}
 
 	public void setCollectRadius(double collectRadius) {
-		this.collectRadius = collectRadius;
+		this.collectRadius = Double.isFinite(collectRadius)
+			? Math.max(0.25D, Math.min(MAX_COLLECT_RADIUS, collectRadius)) : 1.5D;
 	}
 
 	public boolean isPreventShulkerInTravelBag() {

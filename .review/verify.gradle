@@ -7,6 +7,9 @@ gradle.beforeProject { project ->
             classpath = project.sourceSets.main.compileClasspath + project.sourceSets.main.output
             destinationDirectory = project.layout.buildDirectory.dir('review-classes')
             options.release = 25
+            javaCompiler = project.javaToolchains.compilerFor {
+                languageVersion = JavaLanguageVersion.of(25)
+            }
         }
         project.tasks.register('reviewProbe', JavaExec) {
             dependsOn compileProbe

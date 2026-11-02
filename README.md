@@ -46,7 +46,11 @@ It is designed to feel safe on real servers:
 - `/travelbag backup` - Create backups of all TravelBag data files
 - `/travelbag restore <player> <latest|previous>` - Preview a valid backup for a locked TravelBag
 - `/travelbag restore <player> <latest|previous> confirm` - Restore the previewed backup within 60 seconds
+- `/travelbag upgrade <player> <legacy|current> [latest|previous]` - Preview an explicit Minecraft data-version choice for an ambiguous old file
+- `/travelbag upgrade <player> <legacy|current> [latest|previous] confirm` - Confirm that choice within 60 seconds, preserving the original as a recovery snapshot
 - `/travelbag reload` - Reload the config file
+- `/travelbag migrate` - Preview old central singleplayer data and show manual migration instructions
+- `/travelbag migrate confirm` - Import the previewed bag into the current world within 60 seconds
 
 Aliases are configurable and default to:
 - `/bp`
@@ -88,7 +92,14 @@ When LuckPerms support is disabled, TravelBag follows the config fallback values
 
 ## 🤷🏻‍♂️ How Storage Works
 
-TravelBag stores player data in the Fabric config directory: `config/travelbag/players/`
+TravelBag chooses player storage when a server starts:
+
+- Singleplayer worlds (including worlds opened to LAN): `<world-save>/travelbag/players/`
+- Dedicated servers: `config/travelbag/players/`, as before
+
+Each singleplayer world has independent bags, backups and recovery snapshots, including bags belonging to LAN guests.
+Switching dimensions within a world uses the same bag. 
+The configuration file remains in `config/travelbag/travelbag.properties` for both environments.
 
 Each player gets a separate file based on their UUID. TravelBag always stores up to 6 rows internally, even if a player currently only has access to fewer rows.
 
@@ -114,7 +125,77 @@ Backups are created:
 
 If a bag file cannot be decoded safely, TravelBag also creates a timestamped failure snapshot before refusing further saves for that bag.
 
-Locked bags can only be restored by an administrator with `travelbag.restore` or the umbrella `travelbag.admin` permission. The target player must be offline and the bag must be closed by all viewers. TravelBag validates the selected backup before confirmation, snapshots the current data file, replaces it atomically, verifies the restored data, and rolls back automatically if verification fails.
+On dedicated servers, locked bags can only be restored by an administrator with `travelbag.restore` or `travelbag.admin`, and the target must be offline.
+In a singleplayer world, the world owner can recover their own locked bag while online without enabling cheats.
+That exception does not allow recovery of another player's bag.
+All viewers must close the bag first, and the bag must still be locked when confirmation runs.
+Upgrade commands use the same recovery permissions and target restrictions.
+
+TravelBag validates the selected backup before confirmation, snapshots the current data file, replaces it atomically, verifies the restored data, and rolls back automatically if verification fails.
+
+### Older Item Components
+
+New saves record `MinecraftDataVersion` separately from TravelBag's unchanged version-1 bag schema.
+Files with an older recorded Minecraft data version pass through Minecraft's item data fixes, including items inside containers.
+Ordinary historical and unversioned TravelBag layouts remain supported.
+Missing mod content and future data versions stay locked without stripping items or replacing the original file.
+
+Some old files do not record a Minecraft version.
+If an explicit consumable or equippable component omits sound fields. 
+TravelBag locks these ambiguous files instead of guessing.
+
+The check inspects actual item stacks, including container slots, bundles, charged projectiles and use remainders.
+Arbitrary custom-data payloads are not treated as additional item components and are preserved unchanged.
+
+The locked-bag message explains the choice:
+
+```text
+/travelbag upgrade Alex legacy
+/travelbag upgrade Alex legacy confirm
+```
+
+Choose `legacy` for pre-26.4 default sounds, or `current` to preserve intentional silence.
+The command previews the item count and requires confirmation within 60 seconds against the same file fingerprint.
+An exact `.pre-upgrade.*.dat` recovery copy is kept.
+A file with an existing Minecraft data version cannot be reinterpreted through this command.
+This is not a repair for missing mods or malformed item data.
+
+Add `latest` or `previous` before `confirm` to upgrade a backup while leaving the active bag locked, then use the normal restore preview and confirmation.
+If an old central singleplayer file is ambiguous, move it manually into the chosen world's empty bag location while the world is closed, then choose its version with the upgrade command after opening that world.
+
+### Failed Transfers
+
+Menu transfers are committed only after the bag saves successfully.
+On a handled encoding or write failure, the bag, player inventory, cursor and attempted item drops are rolled back; other viewers never receive the uncommitted bag state. 
+Pickup and shortcut allocation retain their source items, and failed death drops are removed while their contents remain in the bag.
+Sorting and cleaning also retain the previous data on failure.
+Repeated write errors for the same cached bag log at DEBUG after the first warning.
+
+Open menus recheck current size, permissions and allowed game mode.
+Reload closes existing bag menus and returns their cursor items normally.
+These checks handle refused saves during normal execution; they do not make Minecraft's separate player, entity and bag files one crash-atomic transaction.
+
+### Moving Old Singleplayer Data
+
+Older versions shared `config/travelbag/players/` between singleplayer worlds.
+Those files do not identify their original world, so TravelBag never imports them automatically.
+The world owner sees a migration notice when their old central file exists.
+
+Run `/travelbag migrate` for a preview, then `/travelbag migrate confirm` within 60 seconds to choose this world.
+The world owner can use these commands without enabling cheats.
+LAN guests and dedicated-server players cannot use them.
+Migration requires an empty, unlocked world-local bag with no viewers; the source must decode completely and must match the preview fingerprint.
+
+Successful migration archives the old active file as `<uuid>.migrated.<unique-id>.dat` in the central directory.
+This preserves the original bytes for recovery and removes it from automatic import eligibility in other worlds.
+Old central backups remain untouched; a new backup is created in the chosen world.
+If a migration is interrupted, check the active world file and the central `.migrated.*.dat` archive before retrying or recovering manually.
+Existing world-local files are not merged with old bags.
+
+For manual migration, exit the world first. Keep a recovery copy, then move the intended `<uuid>.dat` from the old central directory into `<world-save>/travelbag/players/`.
+Only replace a world-local bag that you have verified is empty.
+Old backups may be moved alongside the chosen bag, keeping their original names and preserving any existing world backups separately.
+Do not copy the same active bag into multiple worlds or re-import recovery copies after taking items out, as that duplicates items.
 
 ---
 
@@ -146,6 +227,7 @@ Safety rules:
 - blocked shulker boxes are never removed from the ground
 - items are only collected if they can be stored safely
 - open TravelBag screens stay in sync with auto-pickup changes
+- pickup radius is bounded to 0.25-16 blocks; non-finite values fall back to 1.5
 
 ---
 
@@ -169,17 +251,6 @@ Important options include:
 - item filter
 - allowed game modes
 - aliases
-
----
-
-## 🏠 Mod Menu / Cloth Config
-
-TravelBag supports Mod Menu and Cloth Config as optional client-side extras.
-
-This means:
-- with Mod Menu + Cloth Config installed, you get a config screen
-- on dedicated servers, Cloth Config is not required
-- on clients without Cloth Config, the mod still works normally
 
 ---
 

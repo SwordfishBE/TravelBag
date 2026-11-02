@@ -2,6 +2,7 @@ package net.travelbag;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +24,7 @@ import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -36,6 +38,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.level.gamerules.GameRules;
+import net.minecraft.world.level.storage.LevelResource;
 import net.travelbag.bag.TravelBagInventory;
 import net.travelbag.bag.TravelBagScreenHandler;
 import net.travelbag.command.TravelBagCommands;
@@ -91,10 +94,17 @@ public final class TravelBagMod implements ModInitializer {
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> TravelBagCommands.register(this, dispatcher));
 
+		ServerLifecycleEvents.SERVER_STARTING.register(server -> {
+			this.server = server;
+			Path directory = TravelBagStorage.resolvePlayerDirectory(server.isDedicatedServer(),
+				this.configManager.getDataDirectory(), server.getWorldPath(LevelResource.ROOT));
+			this.storage = new TravelBagStorage(directory);
+			this.storage.prepare(server);
+		});
+
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			this.server = server;
 			this.autoBackupTicks = 0;
-			this.storage.prepare(server);
 			this.storage.createBackups();
 			this.pendingShortcutSyncs.clear();
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -120,10 +130,10 @@ public final class TravelBagMod implements ModInitializer {
 		});
 
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
-			this.storage.prepare(server);
 			this.shortcutItemManager.syncShortcutItem(handler.player);
 			this.compactBag(handler.player.getUUID(), this.getRowsFor(handler.player));
 			this.scheduleShortcutResync(handler.player.getUUID());
+			this.notifyLegacyBag(handler.player);
 		});
 
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
@@ -191,6 +201,25 @@ public final class TravelBagMod implements ModInitializer {
 
 	public TravelBagStorage getStorage() {
 		return this.storage;
+	}
+
+	public boolean canMigrateLegacyBag(ServerPlayer player) {
+		return this.server != null && !this.server.isDedicatedServer()
+			&& this.server.getSingleplayerProfile() != null
+			&& this.server.getSingleplayerProfile().id().equals(player.getUUID());
+	}
+
+	public Path getLegacyPlayerDirectory() {
+		return this.configManager.getDataDirectory().resolve("players");
+	}
+
+	private void notifyLegacyBag(ServerPlayer player) {
+		if (this.canMigrateLegacyBag(player) && Files.isRegularFile(this.getLegacyPlayerDirectory().resolve(player.getUUID() + ".dat"))) {
+			player.sendSystemMessage(Component.literal("TravelBag now stores bags separately in each world. Old central data was found; it has not been imported."));
+			player.sendSystemMessage(Component.literal("[Migration options]").withStyle(style -> style
+				.withClickEvent(new ClickEvent.SuggestCommand("/travelbag migrate"))));
+			player.sendSystemMessage(Component.literal("Run /travelbag migrate to preview a one-time import or view manual migration instructions."));
+		}
 	}
 
 	public PermissionService getPermissionService() {
@@ -291,6 +320,11 @@ public final class TravelBagMod implements ModInitializer {
 		PlayerBagData data = this.storage.getOrLoad(ownerProfile.id());
 		if (data.isSaveBlocked()) {
 			viewer.sendSystemMessage(Component.literal("TravelBag data has been locked to prevent item loss. Please check the server logs and restore from backup if needed."));
+			if (data.isLegacyVersionChoiceRequired()) {
+				String name = ownerProfile.name() == null ? ownerProfile.id().toString() : ownerProfile.name();
+				viewer.sendSystemMessage(Component.literal("This old file needs an item data version choice. Preview /travelbag upgrade "
+					+ name + " legacy for old default sounds, or current to preserve intentional silence. Your original file is unchanged."));
+			}
 			return;
 		}
 		int rows = enforceOwnerPermissions ? this.permissionService.getRowsFor(ownerProfile.id()) : MAX_ROWS;
@@ -298,7 +332,7 @@ public final class TravelBagMod implements ModInitializer {
 		this.compactBag(ownerProfile.id(), rows);
 		String ownerName = ownerProfile.name() == null || ownerProfile.name().isBlank() ? ownerProfile.id().toString() : ownerProfile.name();
 		boolean editable = ownerView || allowEdit && this.permissionService.canEditOthers(viewer);
-		TravelBagInventory inventory = new TravelBagInventory(this, ownerProfile.id(), ownerName, data, rows, editable);
+		TravelBagInventory inventory = new TravelBagInventory(this, ownerProfile.id(), ownerName, data, rows, editable, enforceOwnerPermissions);
 		Component title = ownerView ? TextUtil.fromLegacy(this.getConfig().getTravelBagTitle(), Map.of()) : TextUtil.fromLegacy(this.getConfig().getTravelBagTitleOther(), Map.of("OwnerName", ownerName));
 
 		viewer.openMenu(new SimpleMenuProvider((syncId, playerInventory, player) -> new TravelBagScreenHandler(syncId, playerInventory, inventory), title));
@@ -400,44 +434,47 @@ public final class TravelBagMod implements ModInitializer {
 		if (stack.isEmpty()) {
 			return true;
 		}
-
 		PlayerBagData data = this.storage.getOrLoad(ownerUuid);
-		if (data.isSaveBlocked()) {
+		if (data.isSaveBlocked() || !this.canFullyStoreInBag(ownerUuid, rows, stack) || !this.storage.save(ownerUuid)) {
 			return false;
 		}
+		var before = data.snapshot();
+		ItemStack remaining = stack.copy();
 		int maxSlots = Math.max(1, Math.min(MAX_ROWS, rows)) * 9;
-
 		for (int slot = 0; slot < maxSlots; slot++) {
 			ItemStack existing = data.getStack(slot);
-			if (!existing.isEmpty() && ItemStack.isSameItemSameComponents(existing, stack)) {
-				int transferable = Math.min(stack.getCount(), existing.getMaxStackSize() - existing.getCount());
+			if (!existing.isEmpty() && ItemStack.isSameItemSameComponents(existing, remaining)) {
+				int transferable = Math.min(remaining.getCount(), existing.getMaxStackSize() - existing.getCount());
 				if (transferable > 0) {
 					existing.grow(transferable);
-					stack.shrink(transferable);
+					remaining.shrink(transferable);
 					data.markDirty();
-					if (stack.isEmpty()) {
-						this.refreshOpenBags(ownerUuid);
-						this.storage.save(ownerUuid);
-						return true;
-					}
 				}
 			}
 		}
-
-		for (int slot = 0; slot < maxSlots; slot++) {
-			ItemStack existing = data.getStack(slot);
-			if (existing.isEmpty()) {
-				data.setStack(slot, stack.copyAndClear());
-				data.markDirty();
-				this.refreshOpenBags(ownerUuid);
-				this.storage.save(ownerUuid);
-				return true;
+		for (int slot = 0; slot < maxSlots && !remaining.isEmpty(); slot++) {
+			if (data.getStack(slot).isEmpty()) {
+				data.setStack(slot, remaining.split(Math.min(remaining.getCount(), remaining.getMaxStackSize())));
 			}
 		}
-
+		if (!remaining.isEmpty()) {
+			data.restore(before);
+			return false;
+		}
+		if (!this.persistBagChange(ownerUuid, before)) {
+			return false;
+		}
+		stack.setCount(0);
 		this.refreshOpenBags(ownerUuid);
-		this.storage.save(ownerUuid);
-		return stack.isEmpty();
+		return true;
+	}
+
+	private boolean persistBagChange(UUID ownerUuid, PlayerBagData.Snapshot before) {
+		if (!this.storage.save(ownerUuid)) {
+			this.storage.getOrLoad(ownerUuid).restore(before);
+			return false;
+		}
+		return true;
 	}
 
 	public boolean compactBag(UUID ownerUuid) {
@@ -445,10 +482,12 @@ public final class TravelBagMod implements ModInitializer {
 		if (data.isSaveBlocked()) {
 			return false;
 		}
+		var before = data.snapshot();
 		boolean changed = this.compactBagData(data);
 		if (changed) {
-			this.refreshOpenBags(ownerUuid);
-			this.storage.save(ownerUuid);
+			boolean saved = this.persistBagChange(ownerUuid, before);
+			if (saved) this.refreshOpenBags(ownerUuid);
+			return saved;
 		}
 		return changed;
 	}
@@ -461,10 +500,12 @@ public final class TravelBagMod implements ModInitializer {
 		if (!this.hasHiddenItems(data, visibleRows)) {
 			return false;
 		}
+		var before = data.snapshot();
 		boolean changed = this.compactBagData(data);
 		if (changed) {
-			this.refreshOpenBags(ownerUuid);
-			this.storage.save(ownerUuid);
+			boolean saved = this.persistBagChange(ownerUuid, before);
+			if (saved) this.refreshOpenBags(ownerUuid);
+			return saved;
 		}
 		return changed;
 	}
@@ -567,24 +608,35 @@ public final class TravelBagMod implements ModInitializer {
 			return;
 		}
 
-		boolean changed = false;
-		for (int slot = 0; slot < data.size(); slot++) {
-			ItemStack stack = data.getStack(slot);
-			if (!stack.isEmpty()) {
-				if (player.drop(stack.copy(), true, Prediction.SERVER_ONLY) != null) {
-					data.setStack(slot, ItemStack.EMPTY);
-					changed = true;
-				} else {
-					LOGGER.error("[TravelBag] Failed to drop bag slot {} for {}. The item remains stored.", slot, player.getUUID());
-				}
-			}
-		}
-		if (!changed) {
+		if (!this.storage.save(player.getUUID())) {
 			return;
 		}
-		data.markDirty();
-		this.refreshOpenBags(player.getUUID());
-		this.storage.save(player.getUUID());
+		var before = data.snapshot();
+		List<net.minecraft.world.entity.item.ItemEntity> drops = new ArrayList<>();
+		boolean committed = false;
+		try {
+			for (int slot = 0; slot < data.size(); slot++) {
+				ItemStack stack = data.getStack(slot);
+				if (!stack.isEmpty()) {
+					var drop = player.drop(stack.copy(), true, Prediction.SERVER_ONLY);
+					if (drop != null) {
+						drops.add(drop);
+						data.setStack(slot, ItemStack.EMPTY);
+					} else {
+						LOGGER.error("[TravelBag] Failed to drop bag slot {} for {}. The item remains stored.", slot, player.getUUID());
+					}
+				}
+			}
+			committed = this.storage.save(player.getUUID());
+			if (committed) {
+				this.refreshOpenBags(player.getUUID());
+			}
+		} finally {
+			if (!committed) {
+				drops.forEach(net.minecraft.world.entity.item.ItemEntity::discard);
+				data.restore(before);
+			}
+		}
 	}
 
 	public boolean cleanBag(UUID ownerUuid) {
@@ -593,10 +645,11 @@ public final class TravelBagMod implements ModInitializer {
 			LOGGER.error("[TravelBag] Refusing to clean locked TravelBag data for {}.", ownerUuid);
 			return false;
 		}
+		var before = data.snapshot();
 		data.clear();
-		this.refreshOpenBags(ownerUuid);
-		this.storage.save(ownerUuid);
-		return true;
+		boolean saved = this.persistBagChange(ownerUuid, before);
+		if (saved) this.refreshOpenBags(ownerUuid);
+		return saved;
 	}
 
 	public boolean backupNow() {
@@ -608,6 +661,11 @@ public final class TravelBagMod implements ModInitializer {
 	}
 
 	public void reload() throws IOException {
+		if (this.server != null) {
+			for (ServerPlayer player : this.server.getPlayerList().getPlayers()) {
+				if (player.containerMenu instanceof TravelBagScreenHandler) player.closeContainer();
+			}
+		}
 		this.storage.saveAll();
 		this.storage.createBackups();
 		this.configManager.reload();

@@ -1,0 +1,21 @@
+gradle.beforeProject { project ->
+    project.layout.buildDirectory.set(project.layout.projectDirectory.dir('build-26.4-snapshot-6'))
+    project.afterEvaluate {
+        def compileProbe = project.tasks.register('compileClothNoticeProbe', JavaCompile) {
+            dependsOn project.tasks.named('clientClasses')
+            source = project.files('.review/ClothVersionProbe.java')
+            classpath = project.sourceSets.client.compileClasspath + project.sourceSets.client.output
+            destinationDirectory = project.layout.buildDirectory.dir('cloth-notice-probe')
+            options.release = 25
+            javaCompiler = project.javaToolchains.compilerFor {
+                languageVersion = JavaLanguageVersion.of(25)
+            }
+        }
+        project.tasks.register('clothNoticeProbe', JavaExec) {
+            dependsOn compileProbe
+            classpath = project.sourceSets.client.compileClasspath + project.sourceSets.client.output +
+                    project.files(compileProbe.flatMap { it.destinationDirectory })
+            mainClass = 'net.travelbag.client.ClothVersionProbe'
+        }
+    }
+}

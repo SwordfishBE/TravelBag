@@ -4,8 +4,9 @@
   "version": "1.0.0",
   "name": "TravelBag Compatibility Tests",
   "environment": "*",
+  "mixins": ["travelbag-test.mixins.json"],
   "entrypoints": {
-    "fabric-gametest": ["net.travelbag.TravelBagCompatibilityTests"]
+    "fabric-gametest": ["net.travelbag.TravelBagCompatibilityTests", "net.travelbag.TravelBagWorldStorageTests", "net.travelbag.TravelBagSafetyTests", "net.travelbag.TravelBagFollowupTests"]
   },
   "depends": {
     "travelbag": "*",

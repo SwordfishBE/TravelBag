@@ -7,5 +7,8 @@ gradle.beforeProject { project ->
             enableGameTests = true
             enableClientGameTests = false
         }
+        project.tasks.named('runGameTest', JavaExec) {
+            jvmArgs "-Dtravelbag.test.integrated=${project.hasProperty('integratedStorageTests')}"
+        }
     }
 }

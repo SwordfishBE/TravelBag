@@ -1,0 +1,4 @@
+gradle.beforeProject { project ->
+    project.layout.buildDirectory.set(project.layout.projectDirectory.dir('build-review-followup-2026-11-02'))
+    // Original expected-defect probes are retained as history; current guards live in src/gametest.
+}
