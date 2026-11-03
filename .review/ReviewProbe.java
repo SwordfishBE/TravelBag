@@ -120,7 +120,7 @@ public final class ReviewProbe {
     private static final class ProbeMenu extends AbstractContainerMenu {
         ProbeMenu(SimpleContainer target) {
             super(MenuType.GENERIC_9x1, 0);
-            addSlot(new Slot(target, 0, 0, 0) {
+            addSlot(new Slot(target, 0, 0, 0, Slot.Section.CONTAINER) {
                 @Override public boolean mayPlace(ItemStack stack) { return false; }
             });
         }

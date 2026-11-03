@@ -10,7 +10,7 @@ public final class TravelBagSlot extends Slot {
 	private final boolean enabled;
 
 	public TravelBagSlot(TravelBagInventory inventory, int index, int x, int y) {
-		super(inventory, index, x, y);
+		super(inventory, index, x, y, Slot.Section.CONTAINER);
 		this.bagInventory = inventory;
 		this.enabled = index < inventory.getVisibleSlotCount();
 	}

@@ -28,13 +28,41 @@ import net.travelbag.util.ModrinthUpdateChecker;
 
 public class TravelBagCompatibilityTests {
     @GameTest
-    public void minecraftVersionRangeMatchesSnapshotSixThroughFinal(GameTestHelper helper) throws Exception {
+    public void snapshotSevenSlotSectionsMatchVanillaForEveryBagSize(GameTestHelper helper) {
+        var mod = TravelBagMod.getInstance();
+        var player = helper.makeMockServerPlayerInLevel();
+        var data = new PlayerBagData();
+        data.setStack(53, new ItemStack(Items.DIAMOND, 17));
+        for (int rows = 1; rows <= 6; rows++) {
+            var inventory = new TravelBagInventory(mod, player.getUUID(), "Slot sections", data, rows, false);
+            var menu = new TravelBagScreenHandler(1, player.getInventory(), inventory);
+            try {
+                int bagSlots = rows * 9;
+                helper.assertTrue(menu.slots.size() == bagSlots + 36, "All bag and player slots must be present");
+                for (int index = 0; index < menu.slots.size(); index++) {
+                    var expected = index < bagSlots ? net.minecraft.world.inventory.Slot.Section.CONTAINER
+                        : index < bagSlots + 27 ? net.minecraft.world.inventory.Slot.Section.INVENTORY
+                        : net.minecraft.world.inventory.Slot.Section.HOTBAR;
+                    helper.assertTrue(menu.slots.get(index).getSection() == expected,
+                        "Slot section must match vanilla for row count " + rows + ", slot " + index);
+                }
+                helper.assertTrue(data.getStack(53).getCount() == 17,
+                    "Opening a smaller bag must not lose hidden contents");
+            } finally {
+                menu.removed(player);
+            }
+        }
+        helper.succeed();
+    }
+
+    @GameTest
+    public void minecraftVersionRangeMatchesSnapshotSevenThroughFinal(GameTestHelper helper) throws Exception {
         var dependency = FabricLoader.getInstance().getModContainer("travelbag").orElseThrow().getMetadata()
             .getDependencies().stream().filter(value -> value.getModId().equals("minecraft")).findFirst().orElseThrow();
-        for (String accepted : List.of("26.4-snapshot-6", "26.4-snapshot-7", "26.4-snapshot-10", "26.4-pre-1", "26.4-rc-1", "26.4")) {
+        for (String accepted : List.of("26.4-snapshot-7", "26.4-snapshot-10", "26.4-pre-1", "26.4-rc-1", "26.4")) {
             helper.assertTrue(dependency.matches(normalize(accepted)), "Supported Minecraft version: " + accepted);
         }
-        for (String rejected : List.of("26.3", "26.4-snapshot-1", "26.4-snapshot-5", "26.4.1-pre-1", "26.4.1", "26.5-snapshot-1", "26.5")) {
+        for (String rejected : List.of("26.3", "26.4-snapshot-1", "26.4-snapshot-5", "26.4-snapshot-6", "26.4.1-pre-1", "26.4.1", "26.5-snapshot-1", "26.5")) {
             helper.assertTrue(!dependency.matches(normalize(rejected)), "Unsupported Minecraft version: " + rejected);
         }
         helper.succeed();
@@ -44,22 +72,22 @@ public class TravelBagCompatibilityTests {
     public void updateCheckerUsesRawSnapshotIdAndCompatibleReleases(GameTestHelper helper) throws Exception {
         var current = ModrinthUpdateChecker.class.getDeclaredMethod("currentMinecraftVersion");
         current.setAccessible(true);
-        helper.assertTrue("26.4-snapshot-6".equals(current.invoke(null)), "Modrinth requires the raw Minecraft snapshot ID");
+        helper.assertTrue("26.4-snapshot-7".equals(current.invoke(null)), "Modrinth requires the raw Minecraft snapshot ID");
         var extract = ModrinthUpdateChecker.class.getDeclaredMethod("extractLatestVersion", String.class, String.class);
         extract.setAccessible(true);
         String incompatible = """
             [{"version_number":"99.0.0","date_published":"2026-10-30T00:00:00Z","version_type":"release",
               "loaders":["fabric"],"game_versions":["26.3"]},
              {"version_number":"98.0.0","date_published":"2026-10-30T00:00:00Z","version_type":"release",
-              "loaders":["neoforge"],"game_versions":["26.4-snapshot-6"]}]
+              "loaders":["neoforge"],"game_versions":["26.4-snapshot-7"]}]
             """;
-        var noMatch = (java.util.Optional<?>) extract.invoke(null, incompatible, "26.4-snapshot-6");
+        var noMatch = (java.util.Optional<?>) extract.invoke(null, incompatible, "26.4-snapshot-7");
         helper.assertTrue(noMatch.isEmpty(), "Do not recommend releases for another version or loader");
         String compatible = incompatible.substring(0, incompatible.lastIndexOf(']')) + """
             ,{"version_number":"1.1.1","date_published":"2026-10-29T00:00:00Z","version_type":"release",
-              "loaders":["fabric"],"game_versions":["26.4-snapshot-6"]}]
+              "loaders":["fabric"],"game_versions":["26.4-snapshot-7"]}]
             """;
-        var match = (java.util.Optional<?>) extract.invoke(null, compatible, "26.4-snapshot-6");
+        var match = (java.util.Optional<?>) extract.invoke(null, compatible, "26.4-snapshot-7");
         helper.assertTrue(match.isPresent() && match.get().toString().contains("versionNumber=1.1.1"),
             "Recommend the compatible Fabric release even when incompatible releases are newer");
         helper.succeed();

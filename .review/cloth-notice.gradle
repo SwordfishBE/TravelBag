@@ -1,5 +1,5 @@
 gradle.beforeProject { project ->
-    project.layout.buildDirectory.set(project.layout.projectDirectory.dir('build-26.4-snapshot-6'))
+    project.layout.buildDirectory.set(project.layout.projectDirectory.dir('build-26.4-snapshot-7'))
     project.afterEvaluate {
         def compileProbe = project.tasks.register('compileClothNoticeProbe', JavaCompile) {
             dependsOn project.tasks.named('clientClasses')

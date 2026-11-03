@@ -1,14 +1,36 @@
 gradle.beforeProject { project ->
-    project.layout.buildDirectory.set(project.layout.projectDirectory.dir('build-26.4-snapshot-6'))
+    project.layout.buildDirectory.set(project.layout.projectDirectory.dir('build-26.4-snapshot-7'))
     project.afterEvaluate {
         project.fabricApi.configureTests {
             createSourceSet = true
             modId = 'travelbag-compat-test'
             enableGameTests = true
-            enableClientGameTests = false
+            enableClientGameTests = project.hasProperty('clientTests')
         }
         project.tasks.named('runGameTest', JavaExec) {
             jvmArgs "-Dtravelbag.test.integrated=${project.hasProperty('integratedStorageTests')}"
+        }
+        if (project.hasProperty('clientTests')) {
+            project.sourceSets.gametest.java.srcDir('src/clientTest/java')
+            project.sourceSets.gametest.compileClasspath += project.sourceSets.client.output + project.sourceSets.client.compileClasspath
+            project.sourceSets.gametest.runtimeClasspath += project.sourceSets.client.output + project.sourceSets.client.runtimeClasspath
+            project.dependencies.add('clientRuntimeOnly', "maven.modrinth:modmenu:${project.modmenu_version}")
+            if (!project.hasProperty('withoutCloth')) {
+                project.dependencies.add('clientRuntimeOnly', "me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}") {
+                    exclude group: 'net.fabricmc.fabric-api'
+                }
+            }
+        }
+        project.tasks.named('processGametestResources') {
+            inputs.property('clientTests', project.hasProperty('clientTests'))
+            doLast {
+                if (project.hasProperty('clientTests')) {
+                    def metadataFile = new File(destinationDir, 'fabric.mod.json')
+                    def metadata = new groovy.json.JsonSlurper().parse(metadataFile)
+                    metadata.entrypoints['fabric-client-gametest'] = ['net.travelbag.client.TravelBagClientTest']
+                    metadataFile.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(metadata))
+                }
+            }
         }
     }
 }
