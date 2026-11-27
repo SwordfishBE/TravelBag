@@ -162,30 +162,29 @@ public class TravelBagWorldStorageTests {
         }
         Path legacy = mod.getLegacyPlayerDirectory();
         Path source = fixture(legacy, owner.getUUID());
-        var dispatcher = server.getCommands().getDispatcher();
         var commandSource = owner.createCommandSourceStack();
         try {
             server.setSingleplayerProfile(owner.getGameProfile());
             helper.assertTrue(mod.canMigrateLegacyBag(owner) && !mod.canMigrateLegacyBag(guest),
                 "LAN guests must not be allowed to import host files");
-            helper.assertTrue(dispatcher.execute("travelbag migrate confirm", commandSource) == 0 && Files.exists(source),
+            helper.assertTrue(TravelBagCommandTestSupport.execute(server, "travelbag migrate confirm", commandSource) == 0 && Files.exists(source),
                 "Confirmation without preview must not import anything");
             var bag = mod.getStorage().getOrLoad(owner.getUUID());
             var viewer = new TravelBagInventory(mod, owner.getUUID(), "Migration", bag, 6, false);
             viewer.startOpen(owner);
             try {
-                helper.assertTrue(dispatcher.execute("travelbag migrate", commandSource) == 0, "Open viewers must block migration");
+                helper.assertTrue(TravelBagCommandTestSupport.execute(server, "travelbag migrate", commandSource) == 0, "Open viewers must block migration");
             } finally {
                 viewer.stopOpen(owner);
             }
-            helper.assertTrue(dispatcher.execute("travelbag migrate", commandSource) == 1, "World owner can preview their own legacy bag");
+            helper.assertTrue(TravelBagCommandTestSupport.execute(server, "travelbag migrate", commandSource) == 1, "World owner can preview their own legacy bag");
             bag.setStack(0, new ItemStack(Items.EMERALD));
             bag.markDirty();
-            helper.assertTrue(dispatcher.execute("travelbag migrate confirm", commandSource) == 0 && Files.exists(source),
+            helper.assertTrue(TravelBagCommandTestSupport.execute(server, "travelbag migrate confirm", commandSource) == 0 && Files.exists(source),
                 "Items added after preview must block confirmation");
             bag.clear();
-            helper.assertTrue(dispatcher.execute("travelbag migrate", commandSource) == 1
-                && dispatcher.execute("travelbag migrate confirm", commandSource) == 1, "Explicit confirmed migration must succeed");
+            helper.assertTrue(TravelBagCommandTestSupport.execute(server, "travelbag migrate", commandSource) == 1
+                && TravelBagCommandTestSupport.execute(server, "travelbag migrate confirm", commandSource) == 1, "Explicit confirmed migration must succeed");
             helper.assertTrue(mod.getStorage().getOrLoad(owner.getUUID()).getStack(0).getCount() == 10 && Files.notExists(source),
                 "Command must import exactly ten diamonds and consume the old active source");
         } finally {

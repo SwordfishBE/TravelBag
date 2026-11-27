@@ -9,10 +9,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.mojang.authlib.GameProfile;
-import me.lucko.fabric.api.permissions.v0.PermissionCheckEvent;
+import net.fabricmc.fabric.api.permission.v1.PermissionContext;
+import net.fabricmc.fabric.api.permission.v1.PermissionEvents;
+import net.fabricmc.fabric.api.permission.v1.PermissionNode;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
-import net.fabricmc.fabric.api.util.TriState;
-import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
@@ -33,12 +33,12 @@ public class TravelBagFollowupTests {
         UUID owner = UUID.randomUUID();
         AtomicReference<UUID> actor = new AtomicReference<>(viewer.getUUID());
         AtomicBoolean admin = new AtomicBoolean(true);
-        PermissionCheckEvent.EVENT.register((source, permission) -> {
-            if (source instanceof CommandSourceStack command && command.getEntity() != null
-                && command.getEntity().getUUID().equals(actor.get()) && permission.equals("travelbag.admin")) {
-                return TriState.of(admin.get());
+        PermissionEvents.ON_REQUEST.register(new PermissionEvents.OnRequest() {
+            @Override
+            public <T> T handlePermissionRequest(PermissionContext context, PermissionNode<T> permission) {
+                return context.uuid().equals(actor.get()) && permission.key().toString().equals("travelbag:admin")
+                    ? permission.cast(admin.get()) : null;
             }
-            return TriState.DEFAULT;
         });
         boolean previous = mod.getConfig().isLuckPerms();
         try {

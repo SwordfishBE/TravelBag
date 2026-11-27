@@ -43,16 +43,27 @@ public final class TravelBagClientTest implements FabricClientGameTest {
                 data.setStack(0, new ItemStack(Items.DIAMOND, 7));
                 data.markDirty();
                 if (!mod.getStorage().saveAll()) throw new AssertionError("Cannot persist initial bag");
-                player.setItemInHand(InteractionHand.MAIN_HAND, mod.getShortcutItemManager().createShortcutItem(player));
-                var held = player.getMainHandItem().copy();
-                var pos = player.blockPosition().below();
-                var result = UseBlockCallback.EVENT.invoker().interact(player, player.level(), InteractionHand.MAIN_HAND,
-                    new BlockHitResult(Vec3.atCenterOf(pos), Direction.UP, pos, false));
-                if (result != InteractionResult.SUCCESS || !(player.containerMenu instanceof TravelBagScreenHandler)) {
-                    throw new AssertionError("Shortcut block use must open the bag and consume the interaction");
-                }
-                if (!ItemStack.matches(held, player.getMainHandItem())) {
-                    throw new AssertionError("Opening the bag must not consume the shortcut head");
+                int cooldown = mod.getConfig().getCooldown();
+                mod.getConfig().setCooldown(0);
+                try {
+                    server.getCommands().performPrefixedCommand(player.createCommandSourceStack(), "travelbag");
+                    if (!(player.containerMenu instanceof TravelBagScreenHandler)) {
+                        throw new AssertionError("The registered TravelBag command must open the bag");
+                    }
+                    player.closeContainer();
+                    player.setItemInHand(InteractionHand.MAIN_HAND, mod.getShortcutItemManager().createShortcutItem(player));
+                    var held = player.getMainHandItem().copy();
+                    var pos = player.blockPosition().below();
+                    var result = UseBlockCallback.EVENT.invoker().interact(player, player.level(), InteractionHand.MAIN_HAND,
+                        new BlockHitResult(Vec3.atCenterOf(pos), Direction.UP, pos, false));
+                    if (result != InteractionResult.SUCCESS || !(player.containerMenu instanceof TravelBagScreenHandler)) {
+                        throw new AssertionError("Shortcut block use must open the bag and consume the interaction");
+                    }
+                    if (!ItemStack.matches(held, player.getMainHandItem())) {
+                        throw new AssertionError("Opening the bag must not consume the shortcut head");
+                    }
+                } finally {
+                    mod.getConfig().setCooldown(cooldown);
                 }
             });
             context.waitTicks(10);
@@ -64,7 +75,7 @@ public final class TravelBagClientTest implements FabricClientGameTest {
                     throw new AssertionError("Bag contents did not synchronize to the client");
                 }
             });
-            context.takeScreenshot("travelbag-snapshot-7-open");
+            context.takeScreenshot("travelbag-open");
             world.getServer().runOnServer(server -> {
                 var player = server.getPlayerList().getPlayers().getFirst();
                 player.closeContainer();

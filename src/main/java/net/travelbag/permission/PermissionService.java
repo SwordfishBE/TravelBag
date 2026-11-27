@@ -1,8 +1,11 @@
 package net.travelbag.permission;
 
+import java.util.Locale;
 import java.util.UUID;
 
-import me.lucko.fabric.api.permissions.v0.Permissions;
+import net.fabricmc.fabric.api.permission.v1.PermissionContext;
+import net.fabricmc.fabric.api.permission.v1.PermissionContextOwner;
+import net.minecraft.resources.Identifier;
 
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.server.level.ServerPlayer;
@@ -19,14 +22,14 @@ public final class PermissionService {
 		if (!this.mod.getConfig().isLuckPerms()) {
 			return true;
 		}
-		return Permissions.check(player, "travelbag.use", false);
+		return check(player, "travelbag.use", false);
 	}
 
 	public boolean canUse(CommandSourceStack source) {
 		if (!this.mod.getConfig().isLuckPerms()) {
 			return true;
 		}
-		return Permissions.check(source, "travelbag.use", false);
+		return check(source, "travelbag.use", false);
 	}
 
 	public int getRowsFor(ServerPlayer player) {
@@ -39,7 +42,7 @@ public final class PermissionService {
 		}
 
 		for (int rows = 6; rows >= 1; rows--) {
-			if (Permissions.check(player, "travelbag.size." + rows, false)) {
+			if (check(player, "travelbag.size." + rows, false)) {
 				return rows;
 			}
 		}
@@ -52,17 +55,23 @@ public final class PermissionService {
 			return this.mod.getConfig().getSize();
 		}
 
-		boolean canUse = Permissions.check(playerUuid, "travelbag.use").join();
-		if (!canUse) {
+		var server = this.mod.getServer();
+		if (server == null) {
 			return 0;
 		}
-
+		var online = server.getPlayerList().getPlayer(playerUuid);
+		if (online != null) {
+			return this.getRowsFor(online);
+		}
+		var context = PermissionContext.offlinePlayer(playerUuid, server).join();
+		if (!check(context, "travelbag.use", false)) {
+			return 0;
+		}
 		for (int rows = 6; rows >= 1; rows--) {
-			if (Permissions.check(playerUuid, "travelbag.size." + rows).join()) {
+			if (check(context, "travelbag.size." + rows, false)) {
 				return rows;
 			}
 		}
-
 		return 1;
 	}
 
@@ -70,21 +79,21 @@ public final class PermissionService {
 		if (!this.mod.getConfig().isLuckPerms()) {
 			return this.mod.getConfig().isCollectItems();
 		}
-		return Permissions.check(player, "travelbag.fullpickup", false);
+		return check(player, "travelbag.fullpickup", false);
 	}
 
 	public boolean canCleanOwn(ServerPlayer player) {
 		if (!this.mod.getConfig().isLuckPerms()) {
 			return this.mod.getConfig().isClearCommand();
 		}
-		return Permissions.check(player, "travelbag.clean", false);
+		return check(player, "travelbag.clean", false);
 	}
 
 	public boolean canSortOwn(ServerPlayer player) {
 		if (!this.mod.getConfig().isLuckPerms()) {
 			return true;
 		}
-		return this.hasAdmin(player) || Permissions.check(player, "travelbag.sort", false);
+		return this.hasAdmin(player) || check(player, "travelbag.sort", false);
 	}
 
 	public boolean canCleanOther(ServerPlayer player) {
@@ -103,28 +112,34 @@ public final class PermissionService {
 		if (!this.mod.getConfig().isLuckPerms()) {
 			return false;
 		}
-		return Permissions.check(player, "travelbag.keepOnDeath", false);
+		return check(player, "travelbag.keepOnDeath", false);
 	}
 
 	public boolean canIgnoreCooldown(ServerPlayer player) {
 		if (!this.mod.getConfig().isLuckPerms()) {
 			return false;
 		}
-		return this.hasAdmin(player) || Permissions.check(player, "travelbag.noCooldown", false);
+		return this.hasAdmin(player) || check(player, "travelbag.noCooldown", false);
 	}
 
 	public boolean canIgnoreBlacklist(UUID playerUuid) {
 		if (!this.mod.getConfig().isLuckPerms()) {
 			return false;
 		}
-		return Permissions.check(playerUuid, "travelbag.ignoreBlacklist").join();
+		var server = this.mod.getServer();
+		if (server == null) {
+			return false;
+		}
+		var online = server.getPlayerList().getPlayer(playerUuid);
+		return check(online != null ? online : PermissionContext.offlinePlayer(playerUuid, server).join(),
+			"travelbag.ignoreBlacklist", false);
 	}
 
 	public boolean canIgnoreBlacklist(ServerPlayer player) {
 		if (!this.mod.getConfig().isLuckPerms()) {
 			return false;
 		}
-		return this.hasAdmin(player) || Permissions.check(player, "travelbag.ignoreBlacklist", false);
+		return this.hasAdmin(player) || check(player, "travelbag.ignoreBlacklist", false);
 	}
 
 	public boolean canRunBackup(ServerPlayer player) {
@@ -164,11 +179,17 @@ public final class PermissionService {
 	}
 
 	private boolean checkAdminNode(ServerPlayer player, String node) {
-		return Permissions.check(player, node, this.getAdminFallback(player.createCommandSourceStack()));
+		return check(player, node, this.getAdminFallback(player.createCommandSourceStack()));
 	}
 
 	private boolean checkAdminNode(CommandSourceStack source, String node) {
-		return Permissions.check(source, node, this.getAdminFallback(source));
+		return check(source, node, this.getAdminFallback(source));
+	}
+
+	private static boolean check(PermissionContextOwner owner, String node, boolean fallback) {
+		// LuckPerms translates travelbag:path to travelbag.path and normalizes case.
+		return owner.checkPermission(Identifier.fromNamespaceAndPath("travelbag",
+			node.substring("travelbag.".length()).toLowerCase(Locale.ROOT)), fallback);
 	}
 
 	private boolean getAdminFallback(CommandSourceStack source) {

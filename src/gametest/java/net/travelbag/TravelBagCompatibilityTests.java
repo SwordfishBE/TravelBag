@@ -56,13 +56,13 @@ public class TravelBagCompatibilityTests {
     }
 
     @GameTest
-    public void minecraftVersionRangeMatchesSnapshotSevenThroughFinal(GameTestHelper helper) throws Exception {
+    public void minecraftVersionRangeMatchesSnapshotEightThroughFinal(GameTestHelper helper) throws Exception {
         var dependency = FabricLoader.getInstance().getModContainer("travelbag").orElseThrow().getMetadata()
             .getDependencies().stream().filter(value -> value.getModId().equals("minecraft")).findFirst().orElseThrow();
-        for (String accepted : List.of("26.4-snapshot-7", "26.4-snapshot-10", "26.4-pre-1", "26.4-rc-1", "26.4")) {
+        for (String accepted : List.of("26.4-snapshot-8", "26.4-snapshot-10", "26.4-pre-1", "26.4-pre-2", "26.4-rc-1", "26.4")) {
             helper.assertTrue(dependency.matches(normalize(accepted)), "Supported Minecraft version: " + accepted);
         }
-        for (String rejected : List.of("26.3", "26.4-snapshot-1", "26.4-snapshot-5", "26.4-snapshot-6", "26.4.1-pre-1", "26.4.1", "26.5-snapshot-1", "26.5")) {
+        for (String rejected : List.of("26.3", "26.4-snapshot-1", "26.4-snapshot-5", "26.4-snapshot-6", "26.4-snapshot-7", "26.4.1-pre-1", "26.4.1", "26.5-snapshot-1", "26.5")) {
             helper.assertTrue(!dependency.matches(normalize(rejected)), "Unsupported Minecraft version: " + rejected);
         }
         helper.succeed();
@@ -72,22 +72,22 @@ public class TravelBagCompatibilityTests {
     public void updateCheckerUsesRawSnapshotIdAndCompatibleReleases(GameTestHelper helper) throws Exception {
         var current = ModrinthUpdateChecker.class.getDeclaredMethod("currentMinecraftVersion");
         current.setAccessible(true);
-        helper.assertTrue("26.4-snapshot-7".equals(current.invoke(null)), "Modrinth requires the raw Minecraft snapshot ID");
+        helper.assertTrue("26.4-pre-2".equals(current.invoke(null)), "Modrinth requires the raw Minecraft pre-release ID");
         var extract = ModrinthUpdateChecker.class.getDeclaredMethod("extractLatestVersion", String.class, String.class);
         extract.setAccessible(true);
         String incompatible = """
             [{"version_number":"99.0.0","date_published":"2026-10-30T00:00:00Z","version_type":"release",
               "loaders":["fabric"],"game_versions":["26.3"]},
              {"version_number":"98.0.0","date_published":"2026-10-30T00:00:00Z","version_type":"release",
-              "loaders":["neoforge"],"game_versions":["26.4-snapshot-7"]}]
+              "loaders":["neoforge"],"game_versions":["26.4-snapshot-8"]}]
             """;
-        var noMatch = (java.util.Optional<?>) extract.invoke(null, incompatible, "26.4-snapshot-7");
+        var noMatch = (java.util.Optional<?>) extract.invoke(null, incompatible, "26.4-snapshot-8");
         helper.assertTrue(noMatch.isEmpty(), "Do not recommend releases for another version or loader");
         String compatible = incompatible.substring(0, incompatible.lastIndexOf(']')) + """
             ,{"version_number":"1.1.1","date_published":"2026-10-29T00:00:00Z","version_type":"release",
-              "loaders":["fabric"],"game_versions":["26.4-snapshot-7"]}]
+              "loaders":["fabric"],"game_versions":["26.4-snapshot-8"]}]
             """;
-        var match = (java.util.Optional<?>) extract.invoke(null, compatible, "26.4-snapshot-7");
+        var match = (java.util.Optional<?>) extract.invoke(null, compatible, "26.4-snapshot-8");
         helper.assertTrue(match.isPresent() && match.get().toString().contains("versionNumber=1.1.1"),
             "Recommend the compatible Fabric release even when incompatible releases are newer");
         helper.succeed();

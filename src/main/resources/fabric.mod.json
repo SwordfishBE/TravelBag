@@ -32,10 +32,10 @@
   ],
   "depends": {
     "fabricloader": ">=0.20.1",
-    "minecraft": ">=26.4-alpha.7 <=26.4",
+    "minecraft": ">=26.4-alpha.8 <=26.4",
     "java": ">=25",
     "fabric-api": "*",
-    "fabric-permissions-api-v0": "*"
+    "fabric-permission-api-v1": ">=2.0.0"
   },
   "suggests": {
     "cloth-config": "*",

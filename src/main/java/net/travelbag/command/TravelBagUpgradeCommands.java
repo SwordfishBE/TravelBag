@@ -36,7 +36,7 @@ final class TravelBagUpgradeCommands {
     }
 
     static LiteralArgumentBuilder<CommandSourceStack> create(TravelBagMod mod) {
-        return Commands.literal("upgrade").requires(source -> TravelBagCommands.canRunRecovery(mod, source))
+        return Commands.literal("upgrade")
             .then(Commands.argument("player", GameProfileArgument.gameProfile())
                 .then(mode(mod, "legacy", true)).then(mode(mod, "current", false)));
     }

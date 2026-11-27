@@ -8,9 +8,10 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import me.lucko.fabric.api.permissions.v0.PermissionCheckEvent;
+import net.fabricmc.fabric.api.permission.v1.PermissionContext;
+import net.fabricmc.fabric.api.permission.v1.PermissionEvents;
+import net.fabricmc.fabric.api.permission.v1.PermissionNode;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
-import net.fabricmc.fabric.api.util.TriState;
 import net.minecraft.SharedConstants;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.component.DataComponents;
@@ -186,13 +187,17 @@ public class TravelBagSafetyTests {
             AtomicReference<UUID> actor = new AtomicReference<>(test.player.getUUID());
             AtomicBoolean edit = new AtomicBoolean(true);
             AtomicBoolean open = new AtomicBoolean(true);
-            PermissionCheckEvent.EVENT.register((source, permission) -> {
-                if (!(source instanceof CommandSourceStack command) || command.getEntity() == null
-                    || !command.getEntity().getUUID().equals(actor.get())) return TriState.DEFAULT;
-                if (permission.equals("travelbag.others")) return TriState.of(open.get());
-                if (permission.equals("travelbag.others.edit")) return TriState.of(edit.get());
-                if (permission.equals("travelbag.admin")) return TriState.FALSE;
-                return TriState.DEFAULT;
+            PermissionEvents.ON_REQUEST.register(new PermissionEvents.OnRequest() {
+                @Override
+                public <T> T handlePermissionRequest(PermissionContext context, PermissionNode<T> permission) {
+                    if (!context.uuid().equals(actor.get())) return null;
+                    return switch (permission.key().toString()) {
+                        case "travelbag:others" -> permission.cast(open.get());
+                        case "travelbag:others.edit" -> permission.cast(edit.get());
+                        case "travelbag:admin" -> permission.cast(false);
+                        default -> null;
+                    };
+                }
             });
             UUID owner = UUID.randomUUID();
             var other = test.storage.getOrLoad(owner);
@@ -219,7 +224,6 @@ public class TravelBagSafetyTests {
             var mod = TravelBagMod.getInstance();
             var server = helper.getLevel().getServer();
             var owner = server.getSingleplayerProfile();
-            var dispatcher = server.getCommands().getDispatcher();
             var source = commandSource(test.player);
             try {
                 server.setSingleplayerProfile(test.player.getGameProfile());
@@ -229,26 +233,30 @@ public class TravelBagSafetyTests {
                 bag.blockSaving("Deliberate restore test lock");
                 String command = "travelbag restore " + test.commandName + " latest";
                 if (server.isDedicatedServer()) {
-                    helper.assertTrue(!dispatcher.getRoot().getChild("travelbag").getChild("restore").canUse(source)
-                        && !dispatcher.getRoot().getChild("travelbag").getChild("upgrade").canUse(source),
+                    helper.assertTrue(TravelBagCommandTestSupport.execute(server, command, source) == 0
+                        && TravelBagCommandTestSupport.execute(server, "travelbag upgrade " + test.commandName + " legacy", source) == 0
+                        && bag.isSaveBlocked(),
                         "Dedicated users must not gain owner fallback permissions");
+                    helper.assertTrue(TravelBagCommandTestSupport.execute(server, "travelbag backup", source) == 0
+                        && TravelBagCommandTestSupport.execute(server, "travelbag reload", source) == 0,
+                        "Non-operators must not be able to back up or reload TravelBag");
                 } else {
-                    helper.assertTrue(dispatcher.execute(command + " confirm", source) == 0, "Restore needs a preview");
+                    helper.assertTrue(TravelBagCommandTestSupport.execute(server, command + " confirm", source) == 0, "Restore needs a preview");
                     var viewer = new TravelBagInventory(mod, test.player.getUUID(), "Owner", bag, 6, false);
                     viewer.startOpen(test.player);
                     try {
-                        helper.assertTrue(dispatcher.execute(command, source) == 0, "Viewers must block owner restore");
+                        helper.assertTrue(TravelBagCommandTestSupport.execute(server, command, source) == 0, "Viewers must block owner restore");
                     } finally {
                         viewer.stopOpen(test.player);
                     }
                     UUID other = UUID.randomUUID();
-                    helper.assertTrue(dispatcher.execute("travelbag restore " + other + " latest", source) == 0,
+                    helper.assertTrue(TravelBagCommandTestSupport.execute(server, "travelbag restore " + other + " latest", source) == 0,
                         "Owner fallback must not grant access to another player's bag");
-                    helper.assertTrue(dispatcher.execute(command, source) == 1 && dispatcher.execute(command + " confirm", source) == 1,
+                    helper.assertTrue(TravelBagCommandTestSupport.execute(server, command, source) == 1 && TravelBagCommandTestSupport.execute(server, command + " confirm", source) == 1,
                         "The integrated owner can restore their own locked bag without cheats");
                     helper.assertTrue(test.storage.getOrLoad(test.player.getUUID()).getStack(0).getCount() == 10
                         && !test.storage.getOrLoad(test.player.getUUID()).isSaveBlocked(), "Restore must unlock without granting extra items");
-                    helper.assertTrue(dispatcher.execute(command + " confirm", source) == 0, "A restore confirmation cannot be reused");
+                    helper.assertTrue(TravelBagCommandTestSupport.execute(server, command + " confirm", source) == 0, "A restore confirmation cannot be reused");
                 }
             } finally {
                 server.setSingleplayerProfile(owner);
@@ -356,10 +364,9 @@ public class TravelBagSafetyTests {
                 test.storage.prepare(server);
                 helper.assertTrue(test.storage.getOrLoad(test.player.getUUID()).isSaveBlocked(), "Ambiguous primary must lock");
                 var source = commandSource(test.player);
-                var dispatcher = server.getCommands().getDispatcher();
                 String upgrade = "travelbag upgrade " + test.commandName + " legacy latest";
-                helper.assertTrue(dispatcher.execute(upgrade + " confirm", source) == 0, "Upgrade needs preview");
-                helper.assertTrue(dispatcher.execute(upgrade, source) == 1, "Old backup must preview");
+                helper.assertTrue(TravelBagCommandTestSupport.execute(server, upgrade + " confirm", source) == 0, "Upgrade needs preview");
+                helper.assertTrue(TravelBagCommandTestSupport.execute(server, upgrade, source) == 1, "Old backup must preview");
                 CompoundTag changed;
                 try (var input = Files.newInputStream(backup)) {
                     changed = NbtIo.readCompressed(input, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
@@ -369,15 +376,15 @@ public class TravelBagSafetyTests {
                     NbtIo.writeCompressed(changed, output);
                 }
                 byte[] changedBytes = Files.readAllBytes(backup);
-                helper.assertTrue(dispatcher.execute(upgrade + " confirm", source) == 0
+                helper.assertTrue(TravelBagCommandTestSupport.execute(server, upgrade + " confirm", source) == 0
                     && java.util.Arrays.equals(changedBytes, Files.readAllBytes(backup)), "Changed backup must invalidate the preview without overwriting it");
                 Files.write(backup, original);
-                helper.assertTrue(dispatcher.execute(upgrade, source) == 1 && dispatcher.execute(upgrade + " confirm", source) == 1,
+                helper.assertTrue(TravelBagCommandTestSupport.execute(server, upgrade, source) == 1 && TravelBagCommandTestSupport.execute(server, upgrade + " confirm", source) == 1,
                     "Owner can explicitly upgrade an old backup");
                 helper.assertTrue(java.util.Arrays.equals(original, Files.readAllBytes(primary))
                     && test.storage.getOrLoad(test.player.getUUID()).isSaveBlocked(), "Backup upgrade must not overwrite or unlock the active bag");
                 String restore = "travelbag restore " + test.commandName + " latest";
-                helper.assertTrue(dispatcher.execute(restore, source) == 1 && dispatcher.execute(restore + " confirm", source) == 1,
+                helper.assertTrue(TravelBagCommandTestSupport.execute(server, restore, source) == 1 && TravelBagCommandTestSupport.execute(server, restore + " confirm", source) == 1,
                     "An upgraded backup must be restorable by the integrated owner");
                 helper.assertTrue(test.storage.getOrLoad(test.player.getUUID()).getStack(0).get(DataComponents.CONSUMABLE).sound().isPresent(),
                     "Restored item must retain legacy eating behavior");

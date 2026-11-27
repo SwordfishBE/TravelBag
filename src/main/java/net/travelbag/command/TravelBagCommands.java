@@ -69,18 +69,14 @@ public final class TravelBagCommands {
 			.then(Commands.literal("help")
 				.executes(context -> help(mod, context.getSource())))
 			.then(Commands.literal("migrate")
-				.requires(source -> source.getEntity() instanceof ServerPlayer player && mod.canMigrateLegacyBag(player))
 				.executes(context -> previewMigration(mod, context.getSource()))
 				.then(Commands.literal("confirm")
 					.executes(context -> confirmMigration(mod, context.getSource()))))
 			.then(Commands.literal("backup")
-				.requires(source -> source.getEntity() == null ? mod.getPermissionService().canRunBackup(source) : source.getEntity() instanceof ServerPlayer player && mod.getPermissionService().canRunBackup(player))
 				.executes(context -> backup(mod, context.getSource())))
 			.then(Commands.literal("reload")
-				.requires(source -> source.getEntity() == null ? mod.getPermissionService().canRunReload(source) : source.getEntity() instanceof ServerPlayer player && mod.getPermissionService().canRunReload(player))
 				.executes(context -> reload(mod, context.getSource())))
 			.then(Commands.literal("restore")
-				.requires(source -> canRunRecovery(mod, source))
 				.then(Commands.argument("player", GameProfileArgument.gameProfile())
 					.then(createRestoreChoice("latest", 1, mod))
 					.then(createRestoreChoice("previous", 2, mod))))
@@ -215,6 +211,13 @@ public final class TravelBagCommands {
 	}
 
 	private static int backup(TravelBagMod mod, CommandSourceStack source) {
+		var permissions = mod.getPermissionService();
+		boolean allowed = source.getEntity() == null ? permissions.canRunBackup(source)
+			: source.getEntity() instanceof ServerPlayer player && permissions.canRunBackup(player);
+		if (!allowed) {
+			source.sendFailure(Component.literal("You do not have permission to back up TravelBag data."));
+			return 0;
+		}
 		if (!mod.backupNow()) {
 			source.sendFailure(Component.literal("TravelBag backup was incomplete or failed. Check the server log."));
 			return 0;
@@ -292,6 +295,13 @@ public final class TravelBagCommands {
 	}
 
 	private static int reload(TravelBagMod mod, CommandSourceStack source) {
+		var permissions = mod.getPermissionService();
+		boolean allowed = source.getEntity() == null ? permissions.canRunReload(source)
+			: source.getEntity() instanceof ServerPlayer player && permissions.canRunReload(player);
+		if (!allowed) {
+			source.sendFailure(Component.literal("You do not have permission to reload TravelBag."));
+			return 0;
+		}
 		try {
 			mod.reload();
 			source.sendSuccess(() -> Component.literal("TravelBag config reloaded. Aliases update after restart."), false);
@@ -326,14 +336,14 @@ public final class TravelBagCommands {
 	}
 
 	private static int confirmRestore(TravelBagMod mod, CommandSourceStack source, NameAndId profile, int backupIndex) {
+		if (!canRestoreTarget(mod, source, profile)) {
+			return 0;
+		}
 		RestoreKey key = new RestoreKey(getActorId(source), profile.id(), backupIndex);
 		PendingRestore pending = PENDING_RESTORES.remove(key);
 		long now = System.currentTimeMillis();
 		if (pending == null || pending.expiresAtMillis() < now) {
 			source.sendFailure(Component.literal("Restore confirmation is missing or expired. Preview the backup again first."));
-			return 0;
-		}
-		if (!canRestoreTarget(mod, source, profile)) {
 			return 0;
 		}
 
@@ -356,6 +366,10 @@ public final class TravelBagCommands {
 	}
 
 	static boolean canRestoreTarget(TravelBagMod mod, CommandSourceStack source, NameAndId profile) {
+		if (!canRunRecovery(mod, source)) {
+			source.sendFailure(Component.literal("You do not have permission to recover TravelBag data."));
+			return false;
+		}
 		boolean ownIntegratedBag = source.getEntity() instanceof ServerPlayer actor
 			&& actor.getUUID().equals(profile.id()) && mod.canMigrateLegacyBag(actor);
 		if (!ownIntegratedBag && !mod.getPermissionService().canRunRestore(source)) {
